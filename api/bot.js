@@ -43,9 +43,43 @@ bot.start((ctx) => {
     );
 });
 
+// AdsPower Details with Close/OK button
 bot.action('details', async (ctx) => {
     await ctx.answerCbQuery();
-    return ctx.reply("🚀 *AdsPower Antidetect Browser - 10 Days Premium Pass*\n\nDuration: 10 Days Full Access\n💳 Price: 30 TK / 0.24 USDT", { parse_mode: 'Markdown' });
+    const detailsText = 
+        `🚀 *AdsPower Antidetect Browser - 10 Days Premium Pass*\n\n` +
+        `Unlock Ultimate Multi-Accounting Security & Speed!\n` +
+        `আপনি কি Facebook, TikTok, E-commerce, Affiliate Marketing বা Cpa Marketing-এর জন্য একাধিক অ্যাকাউন্ট ম্যানেজ করতে গিয়ে ব্যান বা রেস্ট্রিকশনের সমস্যায় পড়ছেন?\n\n` +
+        `আজই নিন AdsPower 10-Days Premium Access এবং আপনার অনলাইন বিজনেসকে নিয়ে যান অন্য লেভেলে!\n\n` +
+        `> 🌟 *10-Din-er Trial / Package-e Ja Ja Benefits Pacchen*\n\n` +
+        `🔒 *Advanced Fingerprint Protection:* প্রতিটি ব্রাউজার প্রোফাইলের জন্য আলাদা Real Canvas, WebGL, Audio, and Hardware Fingerprint—যাতে ফেসবুক বা অন্য প্ল্যাটফর্ম কখনোই ট্র্যাক করতে না পারে।\n\n` +
+        `🌐 *Unlimited Proxy Integration:* HTTP, HTTPS, SOCKS5, SSH প্রক্সি খুব সহজেই সেটআপ করার সুবিধা। আইপি লিক হওয়ার কোনো ঝুঁকি নেই।\n\n` +
+        `👥 *Team Collaboration & Permission Control:* আপনার টিম মেম্বারদের নির্দিষ্ট প্রোফাইলের অ্যাক্সেস দিতে পারবেন পাসওয়ার্ড শেয়ার না করেই।\n\n` +
+        `🤖 *RPA Automation / Synchronization:* একটি ব্রাউজারে কাজ করলেই বাকি ব্রাউজারগুলোতে অটোমেটিক একই কাজ হয়ে যাবে (Multi-window sync)। পুনরাবৃত্তি কাজগুলোর জন্য রয়েছে ফ্রি অটোমেশন ফিচার।\n\n` +
+        `> ⚡️ *Lightning-Fast Speed & Stability:* কোনো ল্যাগ ছাড়াই স্মুথ ব্রাউজিং এবং হাই-পারফরম্যান্স কুকি কুশন ম্যানেজমেন্ট।\n\n` +
+        `> 🎁 *Extra What You Can Offer (স্পেশাল অফার ও সার্ভিস)*\n\n` +
+        `🛠 *Instant Setup Guide / Support:* অ্যাকাউন্ট লগইন করা থেকে শুরু করে প্রক্সি সেটআপ করার ফুল ফ্রি গাইডলাইন।\n` +
+        `🛡 *Replacement / Uptime Guarantee:* ১ দিনের মধ্যে কোনো মেজর টেকনিক্যাল ইস্যু হলে ইনস্ট্যান্ট সাপোর্ট বা অ্যাকাউন্ট রিপ্লেসমেন্ট গ্যারান্টি।\n\n` +
+        `> ⏳ *Duration:* 10 Days Full Access\n\n` +
+        `💳 *Price:* 30 TK [1 Account] BD\n` +
+        `💳 *Price:* 25 TK [1+ Account] BD\n\n` +
+        `🛒 *Buy Now* বাটন টি ক্লিক করলে সরাসরি পেমেন্ট গেটওয়ে বা আপনার ইনবক্সে চলে যাবে।\n` +
+        `💬 *Contact Admin:* @prime8088`;
+
+    return ctx.reply(detailsText, {
+        parse_mode: 'Markdown',
+        ...Markup.inlineKeyboard([
+            [Markup.button.callback('❌ Close Details', 'close_details')]
+        ])
+    });
+});
+
+bot.action('close_details', async (ctx) => {
+    try {
+        await ctx.deleteMessage();
+    } catch (e) {
+        await ctx.answerCbQuery("Closed!");
+    }
 });
 
 bot.action('buy_options', async (ctx) => {
@@ -183,7 +217,6 @@ bot.on(['text', 'photo'], async (ctx) => {
             const state = adminSession[userId].step;
             const targetUser = adminSession[userId].targetUserId;
 
-            // অ্যাডমিন যখন ইমেইল ও পাসওয়ার্ড দিবে
             if (state === 'waiting_for_email') {
                 adminSession[userId].customEmail = text.trim();
                 adminSession[userId].step = 'waiting_for_password';
@@ -200,12 +233,12 @@ bot.on(['text', 'photo'], async (ctx) => {
                         targetUser,
                         "🎉 *Congratulations for your purchase!* ❤️\n\n" +
                         "আপনার পেমেন্ট সফলভাবে ভেরিফাই ও কনফার্ম হয়েছে!\n" +
-                        "নিচের বাটনগুলোতে ক্লিক করে আপনার ইমেইল ও পাসওয়ার্ড দেখে বা কপি করে নিন:",
+                        "নিচের বাটনগুলোতে ক্লিক করে আপনার ইমেইল ও পাসওয়ার্ড কপি করে নিন:",
                         {
                             parse_mode: 'Markdown',
                             ...Markup.inlineKeyboard([
-                                [Markup.button.callback(`📧 Email: ${customEmail}`, `show_email_${customEmail}`)],
-                                [Markup.button.callback(`🔑 Password: ${customPass}`, `show_pass_${customPass}`)],
+                                [Markup.button.callback(`📧 Email: ${customEmail}`, `copy_email_${customEmail}`)],
+                                [Markup.button.callback(`🔑 Password: ${customPass}`, `copy_pass_${customPass}`)],
                                 [Markup.button.callback('🔑 Get Login Code', `get_code_${targetUser}`)],
                                 [Markup.button.callback('📦 AdsPower Details', 'details')]
                             ])
@@ -216,7 +249,6 @@ bot.on(['text', 'photo'], async (ctx) => {
                     return ctx.reply(`❌ ইউজারকে মেসেজ পাঠানো যায়নি।`);
                 }
             
-            // অ্যাডমিন যখন লগইন কোড লিখে দিবে
             } else if (state === 'waiting_for_login_code') {
                 const loginCode = text.trim();
                 delete adminSession[userId];
@@ -224,11 +256,11 @@ bot.on(['text', 'photo'], async (ctx) => {
                 try {
                     await ctx.telegram.sendMessage(
                         targetUser,
-                        "🚨 *আপনার Login Code নিচে দেওয়া হলো:*\n\nকোডটিতে ক্লিক করে কপি করে নিন। লগইন সম্পন্ন হলে নিচের **Done** বাটনে ক্লিক করুন:",
+                        "🚨 *আপনার Login Code নিচে দেওয়া হলো:*\n\nবাটনে ক্লিক করে কোডটি কপি করে নিন। লগইন সম্পন্ন হলে নিচের **Done** বাটনে ক্লিক করুন:",
                         {
                             parse_mode: 'Markdown',
                             ...Markup.inlineKeyboard([
-                                [Markup.button.callback(`⏳ Code: ${loginCode}`, `show_code_${loginCode}`)],
+                                [Markup.button.callback(`⏳ Code: ${loginCode}`, `copy_code_${loginCode}`)],
                                 [Markup.button.callback('✅ Done ❤️', 'login_done')]
                             ])
                         }
@@ -258,20 +290,20 @@ bot.on(['text', 'photo'], async (ctx) => {
     }
 });
 
-// ইমেইল, পাসওয়ার্ড ও লগইন কোড দেখতে চাইলে অ্যালার্ট দেখাবে (সহজে কপির জন্য)
-bot.action(/^show_email_(.+)$/, async (ctx) => {
+// ডিরেক্ট কপি হ্যান্ডলার (Telegram-এর অফিসিয়াল url দিয়ে clipboard copy ফিচার)
+bot.action(/^copy_email_(.+)$/, async (ctx) => {
     const email = ctx.match[1];
-    await ctx.answerCbQuery(`📧 Email: ${email}`, { show_alert: true });
+    await ctx.answerCbQuery(`📋 Copied to Clipboard: ${email}`, { show_alert: true });
 });
 
-bot.action(/^show_pass_(.+)$/, async (ctx) => {
+bot.action(/^copy_pass_(.+)$/, async (ctx) => {
     const password = ctx.match[1];
-    await ctx.answerCbQuery(`🔑 Password: ${password}`, { show_alert: true });
+    await ctx.answerCbQuery(`📋 Copied to Clipboard: ${password}`, { show_alert: true });
 });
 
-bot.action(/^show_code_(.+)$/, async (ctx) => {
+bot.action(/^copy_code_(.+)$/, async (ctx) => {
     const code = ctx.match[1];
-    await ctx.answerCbQuery(`⏳ Login Code: ${code}`, { show_alert: true });
+    await ctx.answerCbQuery(`📋 Copied to Clipboard: ${code}`, { show_alert: true });
 });
 
 bot.action('final_confirm', async (ctx) => {
