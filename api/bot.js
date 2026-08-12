@@ -1,19 +1,19 @@
 const { Telegraf, Markup } = require('telegraf');
 
-// আপনার দেওয়া টোকেন
+// আপনার দেওয়া টোকেন
 const bot = new Telegraf('8810183896:AAEtcbK-z19BkACmoUBTJiTYzvxCUVLHKzc');
 
 // অ্যাডমিনের টেলিগ্রাম আইডি
 const ADMIN_ID = '1262396547';
 
-// /start কমান্ড বা মূল মেনু (এখানে শুরুতে 'Login Account' বাটনটি হাইড বা অনুপস্থিত থাকবে)
+// /start কমান্ড বা মূল মেনু
 bot.start((ctx) => {
     const userName = ctx.from.first_name || "User";
     return ctx.reply(
         `⭐ *AdsPower Seller BD*\n\n` +
         `🚀 *স্বাগতম ${userName}! আপনি আমাদের লাকি কাস্টমার!* \n\n` +
         "Unlock Ultimate Multi-Accounting Security & Speed!\n" +
-        "নিচের বাটনগুলো থেকে আপনার প্রয়োজনীয় অপশনটি সিলেক্ট করুন:",
+        "নিচের বাটনগুলো থেকে আপনার প্রয়োজনীয় অপশনটি সিলেক্ট করুন:",
         {
             parse_mode: 'Markdown',
             ...Markup.inlineKeyboard([
@@ -54,7 +54,7 @@ bot.action('details', async (ctx) => {
 bot.action('buy_options', async (ctx) => {
     await ctx.answerCbQuery();
     return ctx.reply(
-        "⭐ *AdsPower Seller BD*\n✨ *You are the lucky customer!*\n\n💳 *Select Payment Method*\nদয়া করে আপনার পছন্দের পেমেন্ট মেথডটি সিলেক্ট করুন (মূল্য: ৩০ টাকা / 0.24 USDT):",
+        "⭐ *AdsPower Seller BD*\n✨ *You are the lucky customer!*\n\n💳 *Select Payment Method*\nদয়া করে আপনার পছন্দের পেমেন্ট মেথডটি সিলেক্ট করুন (মূল্য: ৩০ টাকা / 0.24 USDT):",
         {
             parse_mode: 'Markdown',
             ...Markup.inlineKeyboard([
@@ -121,7 +121,7 @@ bot.action('support', async (ctx) => {
     return ctx.reply(
         "⭐ *AdsPower Seller BD*\n\n" +
         "🔥 *Hey Premium Affiliate Marketer বা CPA Marketer!*\n" +
-        "আপনার যেকোনো প্রয়োজনে আমাদের সাথে সরাসরি যোগাযোগ করুন। আমরা ২৪/৭ সার্ভিস প্রদানে প্রস্তুত।\n\n" +
+        "আপনার যেকোনো প্রয়োজনে আমাদের সাথে সরাসরি যোগাযোগ করুন। আমরা ২৪/৭ সার্ভিস প্রদানে প্রস্তুত।\n\n" +
         "👑 *Admin Contact:* @prime8088",
         { parse_mode: 'Markdown' }
     );
@@ -192,12 +192,10 @@ bot.action('pay_payoneer', async (ctx) => {
     );
 });
 
-// পেমেন্ট কনফার্ম হলে অ্যাডমিনের কাছে অর্ডার ডিটেইলস যাবে এবং ইউজারের জন্য '🔐 Login Account' বাটন আনলক হবে
 bot.action('confirm_payment', async (ctx) => {
     await ctx.answerCbQuery("Payment request sent to admin!");
     const user = ctx.from;
     
-    // অ্যাডমিন প্যানেল নোটিফিকেশন (User ID, Username এবং Ordered Name সহ)
     try {
         await ctx.telegram.sendMessage(
             ADMIN_ID,
@@ -211,10 +209,9 @@ bot.action('confirm_payment', async (ctx) => {
         console.error("Admin notification error:", err);
     }
 
-    // ইউজারকে সাকসেস মেসেজ এবং আনলকড লগইন বাটন প্রদান
     return ctx.reply(
         "🎉 *Congratulations for your purchase!* ❤️\n\n" +
-        "আপনার পেমেন্ট সফলভাবে ভেরিফাই ও কনফার্ম হয়েছে।\n" +
+        "আপনার পেমেন্ট সফলভাবে ভেরিফাই ও কনফার্ম হয়েছে।\n" +
         "নিচের **🔐 Login Account** বাটনে ক্লিক করে আপনার অ্যাকাউন্ট ডিটেইলস দেখে নিন:",
         {
             parse_mode: 'Markdown',
@@ -226,10 +223,8 @@ bot.action('confirm_payment', async (ctx) => {
     );
 });
 
-// ================= Login Panel & Get Code System =================
 bot.action('login_panel', async (ctx) => {
     await ctx.answerCbQuery();
-    
     return ctx.reply(
         "🔐 *AdsPower Secure Login Panel*\n\n" +
         "⚡ *Status:* Unlocked\n\n" +
@@ -247,7 +242,6 @@ bot.action('login_panel', async (ctx) => {
     );
 });
 
-// গেট কোড বাটনে ক্লিক করলে অ্যাডমিনের ইনবক্সে রিকোয়েস্ট যাবে
 bot.action('get_login_code', async (ctx) => {
     await ctx.answerCbQuery("Login code request sent to Admin!");
     const user = ctx.from;
@@ -265,37 +259,36 @@ bot.action('get_login_code', async (ctx) => {
     }
 
     return ctx.reply(
-        "📤 *Login Code Request Sent!*\n\nঅ্যাডমিনের কাছে কোডের অনুরোধ পাঠানো হয়েছে। অ্যাডমিন কোড প্রদান করলে তা সংগ্রহ করে **✅ Done ❤️** এ ক্লিক করুন।"
+        "📤 *Login Code Request Sent!*\n\nঅ্যাডমিনের কাছে কোডের অনুরোধ পাঠানো হয়েছে। অ্যাডমিন কোড প্রদান করলে তা সংগ্রহ করে **✅ Done ❤️** এ ক্লিক করুন।"
     );
 });
 
-// Done বাটনে ক্লিক করলে ফাইনাল কনগ্রাচুলেশনস মেসেজ
 bot.action('login_done', async (ctx) => {
     await ctx.answerCbQuery();
     return ctx.reply(
         "❤️ *Congratulations for your purchase & believe!* 🚀\n\n" +
-        "আপনার অর্ডার এবং এক্সেস সফলভাবে সম্পন্ন হয়েছে। আপনার AdsPower প্রিমিয়াম পাস উপভোগ করুন!\n\n" +
-        "যেকোনো প্রয়োজনে যোগাযোগ করুন: @prime8088",
+        "আপনার অর্ডার এবং এক্সেস সফলভাবে সম্পন্ন হয়েছে। আপনার AdsPower প্রিমিয়াম পাস উপভোগ করুন!\n\n" +
+        "যেকোনো প্রয়োজনে যোগাযোগ করুন: @prime8088",
         { parse_mode: 'Markdown' }
     );
 });
 
-// ডামি বাটন হ্যান্ডলার
 bot.action(['dummy_prime', 'dummy_trx', 'dummy_number'], async (ctx) => {
     await ctx.answerCbQuery("এটি তথ্যমূলক বাটন। পেমেন্ট শেষে 'Confirm Payment' এ ক্লিক করুন।", { show_alert: true });
 });
 
-// Vercel Serverless Function এক্সপোর্ট
+// Vercel Serverless Function Export Handler
 module.exports = async (req, res) => {
     if (req.method === 'POST') {
         try {
+            console.log("Incoming Telegram Update:", JSON.stringify(req.body));
             await bot.handleUpdate(req.body);
             res.status(200).json({ status: 'ok' });
         } catch (e) {
-            console.error(e);
+            console.error("Telegram Update Error:", e);
             res.status(500).json({ error: 'Error handling update' });
         }
     } else {
-        res.status(200).json({ message: 'AdsPower Telegram Bot is running!' });
+        res.status(200).json({ message: 'AdsPower Telegram Bot is running successfully!' });
     }
 };
