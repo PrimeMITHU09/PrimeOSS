@@ -1,11 +1,17 @@
-const { Telegraf, Markup, Scenes, session } = require('telegraf');
+const { Telegraf, Markup } = require('telegraf');
 
 const bot = new Telegraf('8810183896:AAEtcbK-z19BkACmoUBTJiTYzvxCUVLHKzc');
-const ADMIN_ID = '1262396547';
+const ADMIN_ID = '1262396547'; // শুধুমাত্র আপনার টেলিগ্রাম আইডি
 const GROUP_ID = '-5569242233';
 
-// টেম্পোরারি ডেটা স্টোর করার জন্য
 const userSession = {};
+const pendingOrders = {};
+
+// সিকিউরিটি চেক ফাংশন
+function isAdmin(ctx) {
+    const userId = ctx.from.id.toString();
+    return userId === ADMIN_ID;
+}
 
 // /start কমান্ড
 bot.start((ctx) => {
@@ -66,13 +72,13 @@ bot.action('profile', async (ctx) => {
 // My Order
 bot.action('my_order', async (ctx) => {
     await ctx.answerCbQuery();
-    return ctx.reply("🛍 *Ordered Package:* AdsPower 10 Days Full Access\n💵 *Price:* 30 TK / 0.24 USDT\n📌 *Status:* Pending", { parse_mode: 'Markdown' });
+    return ctx.reply("🛍 *Ordered Package:* AdsPower 10 Days Full Access\n💵 *Price:* 30 TK / 0.24 USDT\n📌 *Status:* Pending verification", { parse_mode: 'Markdown' });
 });
 
 // Transaction
 bot.action('transaction', async (ctx) => {
     await ctx.answerCbQuery();
-    return ctx.reply("🧾 *Transaction Records:* Awaiting Confirmation", { parse_mode: 'Markdown' });
+    return ctx.reply("🧾 *Transaction Records:* Awaiting Admin Confirmation", { parse_mode: 'Markdown' });
 });
 
 // Support
@@ -83,7 +89,6 @@ bot.action('support', async (ctx) => {
 
 // ================= Payment Flows =================
 
-// bKash Flow
 bot.action('pay_bkash', async (ctx) => {
     await ctx.answerCbQuery();
     userSession[ctx.from.id] = { method: 'bKash' };
@@ -103,7 +108,6 @@ bot.action('pay_bkash', async (ctx) => {
     );
 });
 
-// Nagad Flow
 bot.action('pay_nagad', async (ctx) => {
     await ctx.answerCbQuery();
     userSession[ctx.from.id] = { method: 'Nagad' };
@@ -123,7 +127,6 @@ bot.action('pay_nagad', async (ctx) => {
     );
 });
 
-// Binance Flow
 bot.action('pay_binance', async (ctx) => {
     await ctx.answerCbQuery();
     userSession[ctx.from.id] = { method: 'Binance' };
@@ -132,7 +135,7 @@ bot.action('pay_binance', async (ctx) => {
         "👤 *Admin Prime!*\n" +
         "🌐 **Binance Payment Details:**\n" +
         "📌 Pay ID: `955102483` / TRC20\n\n" +
-        "পেমেন্ট করে স্ক্রিনশট আপলোড করুন:",
+        "পেমেন্ট করে স্ক্রিনশট বা TxID আপলোড করুন:",
         {
             parse_mode: 'Markdown',
             ...Markup.inlineKeyboard([
@@ -143,7 +146,6 @@ bot.action('pay_binance', async (ctx) => {
     );
 });
 
-// Payoneer Flow
 bot.action('pay_payoneer', async (ctx) => {
     await ctx.answerCbQuery();
     userSession[ctx.from.id] = { method: 'Payoneer' };
@@ -163,7 +165,6 @@ bot.action('pay_payoneer', async (ctx) => {
     );
 });
 
-// Input Handlers via text/photo
 bot.action('input_trx', async (ctx) => {
     await ctx.answerCbQuery();
     userSession[ctx.from.id].waitingFor = 'trx';
@@ -182,7 +183,6 @@ bot.action('input_payoneer_details', async (ctx) => {
     return ctx.reply("আপনার Payoneer Email এবং Customer ID লিখে পাঠান:");
 });
 
-// Text & Photo message listener for inputs
 bot.on(['text', 'photo'], async (ctx) => {
     const userId = ctx.from.id;
     if (!userSession[userId] || !userSession[userId].waitingFor) return;
@@ -208,7 +208,6 @@ bot.on(['text', 'photo'], async (ctx) => {
     }
 });
 
-// Pre-Confirm (Are you sure?)
 bot.action('pre_confirm', async (ctx) => {
     await ctx.answerCbQuery();
     return ctx.reply(
@@ -226,49 +225,127 @@ bot.action('cancel_confirm', async (ctx) => {
     return ctx.reply("পেমেন্ট কনফার্মেশন বাতিল করা হয়েছে।");
 });
 
-// Final Confirm -> Send to Group (-5569242233)
 bot.action('final_confirm', async (ctx) => {
-    await ctx.answerCbQuery("Payment Confirmed!");
+    await ctx.answerCbQuery("Payment Submitted!");
     const user = ctx.from;
     const data = userSession[user.id] || { method: 'Unknown' };
+
+    pendingOrders[user.id] = {
+        name: user.first_name,
+        username: user.username || 'N/A',
+        userId: user.id,
+        method: data.method,
+        proof: data.trxId || data.payoneerDetails || 'TxID/Screenshot Provided'
+    };
 
     let proofText = `📦 *Order Name:* AdsPower 10 Days Full Access\n` +
                     `💳 *Payment Method:* ${data.method}\n` +
                     `👤 *User Name:* ${user.first_name}\n` +
                     `🔗 *Username:* @${user.username || 'N/A'}\n` +
                     `🆔 *User ID:* \`${user.id}\`\n` +
-                    `📌 *TrxID / Details:* ${data.trxId || data.payoneerDetails || 'N/A'}`;
+                    `📌 *TrxID / Details:* ${data.trxId || data.payoneerDetails || 'N/A'}\n\n` +
+                    `🛠 *Admin Approval Command:* \`/approve ${user.id}\``;
 
     try {
-        // গ্রুপে পাঠানো (-5569242233)
         if (data.screenshot) {
             await ctx.telegram.sendPhoto(GROUP_ID, data.screenshot, {
-                caption: `🚨 *New Verified Premium Order!*\n\n` + proofText,
+                caption: `🚨 *New Pending Payment Order!*\n\n` + proofText,
                 parse_mode: 'Markdown'
             });
         } else {
-            await ctx.telegram.sendMessage(GROUP_ID, `🚨 *New Verified Premium Order!*\n\n` + proofText, { parse_mode: 'Markdown' });
+            await ctx.telegram.sendMessage(GROUP_ID, `🚨 *New Pending Payment Order!*\n\n` + proofText, { parse_mode: 'Markdown' });
         }
+
+        await ctx.telegram.sendMessage(ADMIN_ID, `🚨 *New Order to Approve!*\n\n` + proofText, { parse_mode: 'Markdown' });
     } catch (err) {
-        console.error("Group sending error:", err);
+        console.error("Group/Admin notification error:", err);
     }
 
-    // ইউজারকে লগইন প্যানেল বা আনলক মেসেজ দেখানো
     return ctx.reply(
-        "🎉 *Congratulations for your purchase!* ❤️\n\n" +
-        "আপনার পেমেন্ট সফলভাবে সাবমিট ও কনফার্ম হয়েছে!\n" +
-        "নিচের **🔐 Login Account** বাটনে ক্লিক করে আপনার অ্যাকাউন্ট ডিটেইলস দেখে নিন:",
-        {
-            parse_mode: 'Markdown',
-            ...Markup.inlineKeyboard([
-                [Markup.button.callback('🔐 Login Account', 'login_panel')],
-                [Markup.button.callback('📦 AdsPower Details', 'details')]
-            ])
-        }
+        "⏳ *Payment Request Submitted Successfully!* \n\n" +
+        "আপনার পেমেন্টটি সফলভাবে জমা হয়েছে। অ্যাডমিন পেমেন্ট চেক করছেন...\n" +
+        "দয়া করে একটু অপেক্ষা করুন (Wait a few minutes)। অ্যাডমিন কনফার্ম করার সাথে সাথেই আপনার কাছে লগইন একাউন্ট ও কোড চলে আসবে! ❤️",
+        { parse_mode: 'Markdown' }
     );
 });
 
-// Login Panel
+// ================= SECURE ADMIN COMMANDS =================
+
+// /admin কমান্ড (সম্পূর্ণ সিকিউরড)
+bot.command('admin', async (ctx) => {
+    if (!isAdmin(ctx)) {
+        return ctx.reply("❌ আপনার এই কমান্ড ব্যবহারের কোনো অনুমতি নেই!");
+    }
+
+    let text = "👑 *Admin Control Panel*\n\n📋 *Pending Orders List:*\n";
+    let buttons = [];
+
+    const userIds = Object.keys(pendingOrders);
+    if (userIds.length === 0) {
+        text += "কোনো পেন্ডিং অর্ডার নেই।";
+    } else {
+        userIds.forEach((id) => {
+            const ord = pendingOrders[id];
+            text += `• ${ord.name} (ID: \`${id}\`) - ${ord.method}\n`;
+            buttons.push([Markup.button.callback(`✅ Approve: ${ord.name}`, `app_${id}`)]);
+        });
+    }
+
+    return ctx.reply(text, {
+        parse_mode: 'Markdown',
+        ...Markup.inlineKeyboard(buttons)
+    });
+});
+
+// /approve কমান্ড (সিকিউরড)
+bot.command('approve', async (ctx) => {
+    if (!isAdmin(ctx)) return;
+
+    const textParts = ctx.message.text.split(' ');
+    const targetUserId = textParts[1];
+
+    if (!targetUserId || !pendingOrders[targetUserId]) {
+        return ctx.reply("❌ সঠিক User ID দিন। ব্যবহার: `/approve USER_ID`", { parse_mode: 'Markdown' });
+    }
+
+    await sendAccountToUser(ctx, targetUserId);
+});
+
+// বাটন ক্লিক অ্যাপ্রুভ (সিকিউরড)
+bot.action(/^app_(.+)$/, async (ctx) => {
+    if (!isAdmin(ctx)) {
+        return ctx.answerCbQuery("❌ আপনার এই একশন নেওয়ার অনুমতি নেই!", { show_alert: true });
+    }
+    
+    await ctx.answerCbQuery();
+    const targetUserId = ctx.match[1];
+    await sendAccountToUser(ctx, targetUserId);
+});
+
+async function sendAccountToUser(ctx, targetUserId) {
+    delete pendingOrders[targetUserId];
+
+    try {
+        await ctx.telegram.sendMessage(
+            targetUserId,
+            "🎉 *Congratulations for your purchase!* ❤️\n\n" +
+            "আপনার পেমেন্ট সফলভাবে ভেরিফাই ও কনফার্ম হয়েছে!\n" +
+            "নিচের **🔐 Login Account** বাটনে ক্লিক করে আপনার অ্যাকাউন্ট ডিটেইলস দেখে নিন:",
+            {
+                parse_mode: 'Markdown',
+                ...Markup.inlineKeyboard([
+                    [Markup.button.callback('🔐 Login Account', 'login_panel')],
+                    [Markup.button.callback('📦 AdsPower Details', 'details')]
+                ])
+            }
+        );
+        return ctx.reply(`✅ Successfully Approved and sent account details to User ID: ${targetUserId}`);
+    } catch (err) {
+        console.error("Failed to send account:", err);
+        return ctx.reply(`❌ ইউজারকে মেসেজ পাঠানো যায়নি।`);
+    }
+}
+
 bot.action('login_panel', async (ctx) => {
     await ctx.answerCbQuery();
     return ctx.reply(
@@ -291,9 +368,9 @@ bot.action('get_login_code', async (ctx) => {
     await ctx.answerCbQuery("Login code request sent to Admin!");
     const user = ctx.from;
     try {
-        await ctx.telegram.sendMessage(ADMIN_ID, `🔑 *Login Code Request!*\n👤 *User:* ${user.first_name} (\`${user.id}\`)`);
+        await ctx.telegram.sendMessage(ADMIN_ID, `🔑 *Login Code Request from User!*\n👤 *User:* ${user.first_name} (\`${user.id}\`)\n\nদয়া করে ইউজারকে কোড দিন।`);
     } catch (err) {}
-    return ctx.reply("📤 অ্যাডমিনের কাছে কোডের অনুরোধ পাঠানো হয়েছে।");
+    return ctx.reply("📤 অ্যাডমিনের কাছে কোডের অনুরোধ পাঠানো হয়েছে। দয়া করে অপেক্ষা করুন।");
 });
 
 bot.action('login_done', async (ctx) => {
