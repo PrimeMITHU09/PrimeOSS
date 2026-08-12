@@ -233,7 +233,7 @@ bot.on(['text', 'photo'], async (ctx) => {
                         targetUser,
                         "🎉 *Congratulations for your purchase!* ❤️\n\n" +
                         "আপনার পেমেন্ট সফলভাবে ভেরিফাই ও কনফার্ম হয়েছে!\n" +
-                        "নিচের বাটনগুলোতে ক্লিক করে আপনার ইমেইল ও পাসওয়ার্ড কপি করে নিন:",
+                        "নিচের বাটনগুলোতে ক্লিক করে আপনার ইমেইল ও পাসওয়ার্ড সহজে কপি করে নিন:",
                         {
                             parse_mode: 'Markdown',
                             ...Markup.inlineKeyboard([
@@ -256,7 +256,7 @@ bot.on(['text', 'photo'], async (ctx) => {
                 try {
                     await ctx.telegram.sendMessage(
                         targetUser,
-                        "🚨 *আপনার Login Code নিচে দেওয়া হলো:*\n\nবাটনে ক্লিক করে কোডটি কপি করে নিন। লগইন সম্পন্ন হলে নিচের **Done** বাটনে ক্লিক করুন:",
+                        "🚨 *আপনার Login Code নিচে দেওয়া হলো:*\n\nবাটনে ক্লিক করে কোডটি চ্যাটে নিয়ে কপি করে নিন। লগইন সম্পন্ন হলে নিচের **Done** বাটনে ক্লিক করুন:",
                         {
                             parse_mode: 'Markdown',
                             ...Markup.inlineKeyboard([
@@ -290,20 +290,23 @@ bot.on(['text', 'photo'], async (ctx) => {
     }
 });
 
-// ডিরেক্ট কপি হ্যান্ডলার (Telegram-এর অফিসিয়াল url দিয়ে clipboard copy ফিচার)
+// বাটনে ক্লিক করলে ইউজারের চ্যাটে সুন্দরভাবে টেক্সট পাঠিয়ে দেবে, যাতে ইউজার সহজেই চেপে ধরে কপি করতে পারে
 bot.action(/^copy_email_(.+)$/, async (ctx) => {
     const email = ctx.match[1];
-    await ctx.answerCbQuery(`📋 Copied to Clipboard: ${email}`, { show_alert: true });
+    await ctx.answerCbQuery("Email sent below to copy!");
+    return ctx.reply(`📧 আপনার ইমেইল (কপি করতে চেপে ধরে রাখুন):\n\`${email}\``, { parse_mode: 'Markdown' });
 });
 
 bot.action(/^copy_pass_(.+)$/, async (ctx) => {
     const password = ctx.match[1];
-    await ctx.answerCbQuery(`📋 Copied to Clipboard: ${password}`, { show_alert: true });
+    await ctx.answerCbQuery("Password sent below to copy!");
+    return ctx.reply(`🔑 আপনার পাসওয়ার্ড (কপি করতে চেপে ধরে রাখুন):\n\`${password}\``, { parse_mode: 'Markdown' });
 });
 
 bot.action(/^copy_code_(.+)$/, async (ctx) => {
     const code = ctx.match[1];
-    await ctx.answerCbQuery(`📋 Copied to Clipboard: ${code}`, { show_alert: true });
+    await ctx.answerCbQuery("Login Code sent below to copy!");
+    return ctx.reply(`⏳ আপনার লগইন কোড (কপি করতে চেপে ধরে রাখুন):\n\`${code}\``, { parse_mode: 'Markdown' });
 });
 
 bot.action('final_confirm', async (ctx) => {
