@@ -183,15 +183,16 @@ bot.on(['text', 'photo'], async (ctx) => {
             const state = adminSession[userId].step;
             const targetUser = adminSession[userId].targetUserId;
 
+            // অ্যাডমিন যখন ইমেইল ও পাসওয়ার্ড দিবে
             if (state === 'waiting_for_email') {
                 adminSession[userId].customEmail = text.trim();
                 adminSession[userId].step = 'waiting_for_password';
                 return ctx.reply("🔑 এখন এই অ্যাকাউন্টের **Password** টি লিখে পাঠান:");
+            
             } else if (state === 'waiting_for_password') {
                 const customPass = text.trim();
                 const customEmail = adminSession[userId].customEmail;
                 delete adminSession[userId];
-
                 delete pendingOrders[targetUser];
 
                 try {
@@ -214,6 +215,28 @@ bot.on(['text', 'photo'], async (ctx) => {
                 } catch (err) {
                     return ctx.reply(`❌ ইউজারকে মেসেজ পাঠানো যায়নি।`);
                 }
+            
+            // অ্যাডমিন যখন লগইন কোড লিখে দিবে
+            } else if (state === 'waiting_for_login_code') {
+                const loginCode = text.trim();
+                delete adminSession[userId];
+
+                try {
+                    await ctx.telegram.sendMessage(
+                        targetUser,
+                        "🚨 *আপনার Login Code নিচে দেওয়া হলো:*\n\nকোডটিতে ক্লিক করে কপি করে নিন। লগইন সম্পন্ন হলে নিচের **Done** বাটনে ক্লিক করুন:",
+                        {
+                            parse_mode: 'Markdown',
+                            ...Markup.inlineKeyboard([
+                                [Markup.button.callback(`⏳ Code: ${loginCode}`, `show_code_${loginCode}`)],
+                                [Markup.button.callback('✅ Done ❤️', 'login_done')]
+                            ])
+                        }
+                    );
+                    return ctx.reply(`✅ ইউজারের কাছে লগইন কোড সফলভাবে পাঠানো হয়েছে!`);
+                } catch (err) {
+                    return ctx.reply(`❌ ইউজারকে লগইন কোড পাঠানো যায়নি।`);
+                }
             }
         }
     }
@@ -235,7 +258,7 @@ bot.on(['text', 'photo'], async (ctx) => {
     }
 });
 
-// ইমেইল বা পাসওয়ার্ড দেখতে চাইলে অ্যালার্ট বা পপআপে দেখাবে যাতে সহজে কপি করা যায়
+// ইমেইল, পাসওয়ার্ড ও লগইন কোড দেখতে চাইলে অ্যালার্ট দেখাবে (সহজে কপির জন্য)
 bot.action(/^show_email_(.+)$/, async (ctx) => {
     const email = ctx.match[1];
     await ctx.answerCbQuery(`📧 Email: ${email}`, { show_alert: true });
@@ -244,6 +267,11 @@ bot.action(/^show_email_(.+)$/, async (ctx) => {
 bot.action(/^show_pass_(.+)$/, async (ctx) => {
     const password = ctx.match[1];
     await ctx.answerCbQuery(`🔑 Password: ${password}`, { show_alert: true });
+});
+
+bot.action(/^show_code_(.+)$/, async (ctx) => {
+    const code = ctx.match[1];
+    await ctx.answerCbQuery(`⏳ Login Code: ${code}`, { show_alert: true });
 });
 
 bot.action('final_confirm', async (ctx) => {
@@ -389,17 +417,33 @@ bot.action(/^get_code_(.+)$/, async (ctx) => {
     try {
         await ctx.telegram.sendMessage(
             ADMIN_ID, 
-            `🔑 *Login Code Request from User!*\n\n👤 *User:* ${user.first_name} (\`${targetUserId}\`)\n\nদয়া করে এই ইউজারকে লগইন কোড প্রদান করুন।`
+            `🔑 *Login Code Request from User!*\n\n👤 *User:* ${user.first_name} (\`${targetUserId}\`)\n\nদয়া করে এই ইউজারকে লগইন কোড প্রদান করুন।`,
+            {
+                parse_mode: 'Markdown',
+                ...Markup.inlineKeyboard([
+                    [Markup.button.callback('📤 Send Login Code', `send_code_admin_${targetUserId}`)]
+                ])
+            }
         );
     } catch (err) {}
 
-    return ctx.reply("📤 অ্যাডমিনের কাছে কোডের অনুরোধ পাঠানো হয়েছে। অ্যাডমিন কোড দিলে নিচে 'Done' বাটনে ক্লিক করবেন:", {
-        parse_mode: 'Markdown',
-        ...Markup.inlineKeyboard([
-            [Markup.button.callback('✅ Done ❤️', 'login_done')]
-        ])
-    });
+    return ctx.reply("📤 অ্যাডমিনের কাছে কোডের অনুরোধ পাঠানো হয়েছে। অ্যাডমিন কোড দিলে আপনার কাছে মেসেজ চলে আসবে। দয়া করে অপেক্ষা করুন...");
 });
+
+// Admin clicks "Send Login Code"
+bot.action(/^send_code_admin_(.+)$/, async (ctx) => {
+    if (!isAdmin(ctx)) return;
+    await ctx.answerCbQuery();
+    const targetUserId = ctx.match[1];
+
+    adminSession[ctx.from.id.toString()] = {
+        step: 'waiting_for_login_code',
+        targetUserId: targetUserId
+    };
+
+    return ctx.reply(`🔑 অনুগ্রহ করে ইউজার (ID: \`${targetUserId}\`) এর জন্য **Login Code** টি লিখে পাঠান:`, { parse_mode: 'Markdown' });
+});
+
 
 bot.action('login_done', async (ctx) => {
     await ctx.answerCbQuery();
