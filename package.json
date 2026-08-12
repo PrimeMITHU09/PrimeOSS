@@ -1,0 +1,9 @@
+{
+  "name": "adspower-telegram-bot",
+  "version": "1.0.0",
+  "description": "AdsPower Telegram Bot",
+  "main": "api/bot.js",
+  "dependencies": {
+    "telegraf": "^4.16.3"
+  }
+}
