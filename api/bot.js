@@ -5,15 +5,15 @@ const ADMIN_ID = '1262396547';
 const GROUP_ID = '-5569242233';
 
 const userSession = {};
-const pendingOrders = {}; // { userId: { name, username, userId, method, proof } }
-const allStartedUsers = new Set(); // বট স্টার্ট করা সব ইউজারের আইডি ট্র্যাক করার জন্য
+const pendingOrders = {}; 
+const allStartedUsers = new Set(); 
 
 function isAdmin(ctx) {
     const userId = ctx.from.id.toString();
     return userId === ADMIN_ID;
 }
 
-// গোল্ডেন ও প্রিমিয়াম স্টাইলের পার্মানেন্ট রিপ্লাই কিবোর্ড (নিচে শো করবে)
+// গোল্ডেন ও প্রিমিয়াম স্টাইলের পার্মানেন্ট রিপ্লাই কিবোর্ড
 const adminReplyKeyboard = Markup.keyboard([
     ['⭐ 📦 Pending Orders ⭐', '⭐ 👥 Total Bot Users ⭐'],
     ['👑 Close Admin Panel 👑']
@@ -22,7 +22,7 @@ const adminReplyKeyboard = Markup.keyboard([
 // /start কমান্ড
 bot.start((ctx) => {
     const userId = ctx.from.id.toString();
-    allStartedUsers.add(userId); // কাউন্ট করার জন্য সেভ হলো
+    allStartedUsers.add(userId);
 
     const userName = ctx.from.first_name || "User";
     return ctx.reply(
@@ -168,18 +168,26 @@ bot.action('input_payoneer_details', async (ctx) => {
     return ctx.reply("আপনার Payoneer Email এবং Customer ID লিখে পাঠান:");
 });
 
+// Text / Message Handler
 bot.on(['text', 'photo'], async (ctx) => {
     const userId = ctx.from.id;
     const text = ctx.message.text;
 
-    // যদি অ্যাডমিন রিপ্লাই কিবোর্ডের বাটনগুলোতে ক্লিক করেন
+    // অ্যাডমিন চেক এবং রিপ্লাই কিবোর্ড হ্যান্ডলিং
     if (isAdmin(ctx)) {
-        if (text === '⭐ 📦 Pending Orders ⭐') {
-            return showPendingOrdersMenu(ctx);
-        } else if (text === '⭐ 👥 Total Bot Users ⭐') {
-            return showTotalUsersStats(ctx);
-        } else if (text === '👑 Close Admin Panel 👑') {
-            return ctx.reply("👑 Admin Panel Closed.", Markup.removeKeyboard());
+        if (text === '/admin' || text === '👑 Close Admin Panel 👑' || text === '⭐ 📦 Pending Orders ⭐' || text === '⭐ 👥 Total Bot Users ⭐') {
+            if (text === '/admin' || text === '⭐ 📦 Pending Orders ⭐') {
+                if (text === '/admin') {
+                    await ctx.reply("👑 *Welcome to Admin Golden Control Panel*", { parse_mode: 'Markdown', ...adminReplyKeyboard });
+                }
+                return showPendingOrdersMenu(ctx);
+            } 
+            if (text === '⭐ 👥 Total Bot Users ⭐') {
+                return showTotalUsersStats(ctx);
+            }
+            if (text === '👑 Close Admin Panel 👑') {
+                return ctx.reply("👑 Admin Panel Closed.", Markup.removeKeyboard());
+            }
         }
     }
 
@@ -255,22 +263,8 @@ bot.action('final_confirm', async (ctx) => {
     );
 });
 
-// ================= ADMIN COMMAND & MENUS =================
+// ================= ADMIN MENUS =================
 
-// /admin কমান্ড দিলে গোল্ডেন রিপ্লাই কিবোর্ড সহ প্যানেল ওপেন হবে
-bot.command('admin', async (ctx) => {
-    if (!isAdmin(ctx)) return ctx.reply("❌ আপনার এই কমান্ড ব্যবহারের অনুমতি নেই!");
-
-    return ctx.reply(
-        "👑 *Welcome to Admin Golden Control Panel*\n\nনিচের রিপ্লাই কিবোর্ড থেকে অপশন সিলেক্ট করুন:",
-        {
-            parse_mode: 'Markdown',
-            ...adminReplyKeyboard
-        }
-    );
-});
-
-// Pending Orders ফাংশন
 async function showPendingOrdersMenu(ctx) {
     let buttons = [];
     const userIds = Object.keys(pendingOrders);
@@ -290,7 +284,6 @@ async function showPendingOrdersMenu(ctx) {
     });
 }
 
-// নির্দিষ্ট অর্ডারে ক্লিক করলে তার পেমেন্ট ডিটেইলস ও অ্যাপ্রুভ বাটন দেখাবে
 bot.action(/^view_order_(.+)$/, async (ctx) => {
     if (!isAdmin(ctx)) return ctx.answerCbQuery("Unauthorized!", { show_alert: true });
     await ctx.answerCbQuery();
@@ -316,7 +309,6 @@ bot.action(/^view_order_(.+)$/, async (ctx) => {
     });
 });
 
-// অ্যাডমিন কনফার্ম করলে ইউজারের কাছে লগইন অ্যাকাউন্ট চলে যাবে
 bot.action(/^approve_order_(.+)$/, async (ctx) => {
     if (!isAdmin(ctx)) return;
     await ctx.answerCbQuery();
@@ -351,12 +343,10 @@ bot.action(/^cancel_order_(.+)$/, async (ctx) => {
     return ctx.reply(`❌ Order for ID ${targetUserId} cancelled.`);
 });
 
-// Total Users Stats ফাংশন
 async function showTotalUsersStats(ctx) {
     const totalCount = allStartedUsers.size;
     let buttons = [];
 
-    // ইউজারদের লিস্ট দেখার জন্য বাটন তৈরি
     Array.from(allStartedUsers).forEach((id, index) => {
         buttons.push([Markup.button.callback(`👤 User #${index + 1} (ID: ${id})`, `inspect_user_${id}`)]);
     });
@@ -367,12 +357,11 @@ async function showTotalUsersStats(ctx) {
         `নিচের তালিকা থেকে যেকোনো ইউজারের ওপর ক্লিক করে দেখতে পারেন:`,
         {
             parse_mode: 'Markdown',
-            ...Markup.inlineKeyboard(buttons.slice(0, 50)) // সর্বোচ্চ ৫০টি বাটন একসাথে দেখাবে
+            ...Markup.inlineKeyboard(buttons.slice(0, 50))
         }
     );
 }
 
-// নির্দিষ্ট ইউজারের আইডি দেখার জন্য
 bot.action(/^inspect_user_(.+)$/, async (ctx) => {
     if (!isAdmin(ctx)) return;
     await ctx.answerCbQuery();
