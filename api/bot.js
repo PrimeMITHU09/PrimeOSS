@@ -81,12 +81,16 @@ bot.action('clear_my_order', async (ctx) => { await ctx.answerCbQuery("Order his
 bot.action('transaction', async (ctx) => { await ctx.answerCbQuery(); return ctx.reply("🧾 *Transaction Records:* Verified", { parse_mode: 'Markdown' }); });
 bot.action('support', async (ctx) => { await ctx.answerCbQuery(); return ctx.reply("👑 *Admin Contact:* @prime8088", { parse_mode: 'Markdown' }); });
 
-bot.action('pay_bkash', async (ctx) => { await ctx.answerCbQuery(); userSession[ctx.from.id] = { method: 'bKash' }; return ctx.reply("📞 Send Money: `01864339154`\n\nনিচের বাটনে ক্লিক করে TrxID দিন:", { parse_mode: 'Markdown', ...Markup.inlineKeyboard([[Markup.button.callback('✍️ TrxID দিন', 'input_trx')]]) }); });
-bot.action('pay_nagad', async (ctx) => { await ctx.answerCbQuery(); userSession[ctx.from.id] = { method: 'Nagad' }; return ctx.reply("📞 Send Money: `01864339154`\n\nনিচের বাটনে ক্লিক করে TrxID দিন:", { parse_mode: 'Markdown', ...Markup.inlineKeyboard([[Markup.button.callback('✍️ TrxID দিন', 'input_trx')]]) }); });
+bot.action('pay_bkash', async (ctx) => { await ctx.answerCbQuery(); userSession[ctx.from.id] = { method: 'bKash' }; return ctx.reply("📞 Send Money: `01864339154`\n\nনিচের বাটনে ক্লিক করে TrxID ও নাম্বার দিন:", { parse_mode: 'Markdown', ...Markup.inlineKeyboard([[Markup.button.callback('✍️ TrxID ও নাম্বার দিন', 'input_trx')]]) }); });
+bot.action('pay_nagad', async (ctx) => { await ctx.answerCbQuery(); userSession[ctx.from.id] = { method: 'Nagad' }; return ctx.reply("📞 Send Money: `01864339154`\n\nনিচের বাটনে ক্লিক করে TrxID ও নাম্বার দিন:", { parse_mode: 'Markdown', ...Markup.inlineKeyboard([[Markup.button.callback('✍️ TrxID ও নাম্বার দিন', 'input_trx')]]) }); });
 bot.action('pay_binance', async (ctx) => { await ctx.answerCbQuery(); userSession[ctx.from.id] = { method: 'Binance' }; return ctx.reply("📌 Pay ID: `955102483`\n\nস্ক্রিনশট বা TxID দিন:", { parse_mode: 'Markdown', ...Markup.inlineKeyboard([[Markup.button.callback('📤 স্ক্রিনশট বা TxID দিন', 'input_screenshot')]]) }); });
 bot.action('pay_payoneer', async (ctx) => { await ctx.answerCbQuery(); userSession[ctx.from.id] = { method: 'Payoneer' }; return ctx.reply("📧 Email: `mithuchandra647@gmail.com`\n\nDetails দিন:", { parse_mode: 'Markdown', ...Markup.inlineKeyboard([[Markup.button.callback('✍️ Details দিন', 'input_payoneer_details')]]) }); });
 
-bot.action('input_trx', async (ctx) => { await ctx.answerCbQuery(); userSession[ctx.from.id].waitingFor = 'trx'; return ctx.reply("আপনার পেমেন্টের TrxID কোডটি লিখে পাঠান:"); });
+bot.action('input_trx', async (ctx) => { 
+    await ctx.answerCbQuery(); 
+    userSession[ctx.from.id].waitingFor = 'trx'; 
+    return ctx.reply("আপনার পেমেন্টের TrxID এবং যে নাম্বার থেকে টাকা পাঠিয়েছেন তা এভাবে লিখে পাঠান:\n\n`TrxID: XXXXXX, Number: 01XXXXXXXXX`", { parse_mode: 'Markdown' }); 
+});
 bot.action('input_screenshot', async (ctx) => { await ctx.answerCbQuery(); userSession[ctx.from.id].waitingFor = 'screenshot'; return ctx.reply("আপনার বাইন্যান্স পেমেন্টের স্ক্রিনশট বা TxID ছবি আকারে পাঠান:"); });
 bot.action('input_payoneer_details', async (ctx) => { await ctx.answerCbQuery(); userSession[ctx.from.id].waitingFor = 'payoneer_details'; return ctx.reply("আপনার Payoneer Email এবং Customer ID লিখে পাঠান:"); });
 
@@ -148,7 +152,6 @@ async function showPendingOrdersMenu(ctx) {
     return buttons.length === 0 ? ctx.reply("⭐ No pending orders.") : ctx.reply("⭐ *Select Order:*", { parse_mode: 'Markdown', ...Markup.inlineKeyboard(buttons) });
 }
 
-// নতুন আপডেট করা view_order ফাংশন এখানে যুক্ত করা হলো
 bot.action(/^view_order_(.+)$/, async (ctx) => {
     if (!isAdmin(ctx)) return;
     await ctx.answerCbQuery();
@@ -156,7 +159,13 @@ bot.action(/^view_order_(.+)$/, async (ctx) => {
     const ord = pendingOrders[targetUserId];
     if (!ord) return ctx.reply("❌ অর্ডারটি পাওয়া যায়নি।");
 
-    const waMessage = encodeURIComponent(`🚨 *নতুন অর্ডার এসেছে!*\n👤 নাম: ${ord.name}\n🆔 আইডি: ${ord.userId}\n💳 পেমেন্ট: ${ord.method}\n📌 প্রুফ: ${ord.proof}`);
+    const waMessage = encodeURIComponent(
+        `🚨 *নতুন অর্ডার এসেছে!*\n\n` +
+        `👤 নাম: ${ord.name}\n` +
+        `🆔 আইডি: ${ord.userId}\n` +
+        `💳 পেমেন্ট: ${ord.method}\n` +
+        `📌 ট্রানজেকশন ও নাম্বার: ${ord.proof}`
+    );
     const waLink = `https://wa.me/8801864339154?text=${waMessage}`;
 
     return ctx.reply(`📋 *Order:* ${ord.name}\n👤 @${ord.username}\n💳 ${ord.method}\n📌 ${ord.proof}`, {
