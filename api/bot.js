@@ -7,8 +7,8 @@ const GROUP_ID = '-5569242233';
 const userSession = {};
 const pendingOrders = {}; 
 const allStartedUsers = new Set(); 
-const userOrderHistory = {}; // ইউজারের নিজস্ব অর্ডার হিস্ট্রি সেভ রাখার জন্য
-const adminSession = {}; // অ্যাডমিনের কাস্টম ইমেইল-পাসওয়ার্ড নেওয়ার জন্য
+const userOrderHistory = {}; 
+const adminSession = {}; 
 
 function isAdmin(ctx) {
     const userId = ctx.from.id.toString();
@@ -30,7 +30,7 @@ bot.start((ctx) => {
         `⭐ *AdsPower Seller BD*\n\n` +
         `🚀 *স্বাগতম ${userName}! আপনি আমাদের লাকি কাস্টমার!* \n\n` +
         "Unlock Ultimate Multi-Accounting Security & Speed!\n" +
-        "নিচের বাটনগুলো থেকে আপনার প্রয়োজনীয় অপشنটি সিলেক্ট করুন:",
+        "নিচের বাটনগুলো থেকে আপনার প্রয়োজনীয় অপশনটি সিলেক্ট করুন:",
         {
             parse_mode: 'Markdown',
             ...Markup.inlineKeyboard([
@@ -65,7 +65,6 @@ bot.action('profile', async (ctx) => {
     return ctx.reply(`👤 *My Profile Info*\n\n• Name: ${user.first_name}\n• Username: @${user.username || 'N/A'}\n• User ID: \`${user.id}\``, { parse_mode: 'Markdown' });
 });
 
-// My Order হিস্ট্রি এবং ক্লিয়ার অপশন
 bot.action('my_order', async (ctx) => {
     await ctx.answerCbQuery();
     const userId = ctx.from.id;
@@ -164,7 +163,6 @@ bot.on(['text', 'photo'], async (ctx) => {
     const userId = ctx.from.id.toString();
     const text = ctx.message.text;
 
-    // ১. অ্যাডমিন প্যানেল কমান্ড ও ইনপুট হ্যান্ডলিং
     if (isAdmin(ctx)) {
         if (text === '/admin' || text === '👑 Close Admin Panel 👑' || text === '⭐ 📦 Pending Orders ⭐' || text === '⭐ 👥 Total Bot Users ⭐') {
             if (text === '/admin' || text === '⭐ 📦 Pending Orders ⭐') {
@@ -181,21 +179,19 @@ bot.on(['text', 'photo'], async (ctx) => {
             }
         }
 
-        // অ্যাডমিন যখন কাস্টম ইমেইল বা পাসওয়ার্ড টাইপ করবেন
         if (adminSession[userId] && adminSession[userId].step) {
             const state = adminSession[userId].step;
             const targetUser = adminSession[userId].targetUserId;
 
             if (state === 'waiting_for_email') {
-                adminSession[userId].customEmail = text;
+                adminSession[userId].customEmail = text.trim();
                 adminSession[userId].step = 'waiting_for_password';
                 return ctx.reply("🔑 এখন এই অ্যাকাউন্টের **Password** টি লিখে পাঠান:");
             } else if (state === 'waiting_for_password') {
-                const customPass = text;
+                const customPass = text.trim();
                 const customEmail = adminSession[userId].customEmail;
                 delete adminSession[userId];
 
-                // ইউজারের ডেটা থেকে অর্ডার রিমুভ ও প্রসেস করা
                 delete pendingOrders[targetUser];
 
                 try {
@@ -203,13 +199,13 @@ bot.on(['text', 'photo'], async (ctx) => {
                         targetUser,
                         "🎉 *Congratulations for your purchase!* ❤️\n\n" +
                         "আপনার পেমেন্ট সফলভাবে ভেরিফাই ও কনফার্ম হয়েছে!\n" +
-                        "নিচের বাটনগুলোতে ক্লিক করে আপনার ইমেইল ও পাসওয়ার্ড কপি করে নিন:",
+                        "নিচের বাটনগুলোতে ক্লিক করে আপনার ইমেইল ও পাসওয়ার্ড দেখে বা কপি করে নিন:",
                         {
                             parse_mode: 'Markdown',
                             ...Markup.inlineKeyboard([
-                                [Markup.button.callback(`📧 Email: ${customEmail}`, `copy_info_${customEmail}`)],
-                                [Markup.button.callback(`🔑 Password: ${customPass}`, `copy_info_${customPass}`)],
-                                [Markup.button.callback('🔑 Get Login Code', `get_code_${targetUser}_${customEmail}`)],
+                                [Markup.button.callback(`📧 Email: ${customEmail}`, `show_email_${customEmail}`)],
+                                [Markup.button.callback(`🔑 Password: ${customPass}`, `show_pass_${customPass}`)],
+                                [Markup.button.callback('🔑 Get Login Code', `get_code_${targetUser}`)],
                                 [Markup.button.callback('📦 AdsPower Details', 'details')]
                             ])
                         }
@@ -222,7 +218,6 @@ bot.on(['text', 'photo'], async (ctx) => {
         }
     }
 
-    // ২. সাধারণ ইউজার TrxID সাবমিশন (যাতে TrxID চ্যাটে হাইড হয়ে কনফার্ম বাটন আসে)
     if (!userSession[userId] || !userSession[userId].waitingFor) return;
 
     const state = userSession[userId].waitingFor;
@@ -230,7 +225,6 @@ bot.on(['text', 'photo'], async (ctx) => {
         userSession[userId].proof = text || (ctx.message.photo ? "Photo Provided" : "Details Provided");
         userSession[userId].waitingFor = null;
 
-        // ইউজারের চ্যাট থেকে ইউজার মেসেজ ডিলিট করার চেষ্টা (হাইড করার জন্য)
         try { await ctx.deleteMessage(); } catch(e) {}
 
         return ctx.reply("✅ আপনার পেমেন্ট ইনফো গ্রহণ করা হয়েছে। নিচে কনফার্ম বাটনে ক্লিক করুন:", {
@@ -241,10 +235,15 @@ bot.on(['text', 'photo'], async (ctx) => {
     }
 });
 
-// কপি ইনফো বাটন হ্যান্ডলার
-bot.action(/^copy_info_(.+)$/, async (ctx) => {
-    const val = ctx.match[1];
-    await ctx.answerCbQuery(`Copied: ${val}`, { show_alert: true });
+// ইমেইল বা পাসওয়ার্ড দেখতে চাইলে অ্যালার্ট বা পপআপে দেখাবে যাতে সহজে কপি করা যায়
+bot.action(/^show_email_(.+)$/, async (ctx) => {
+    const email = ctx.match[1];
+    await ctx.answerCbQuery(`📧 Email: ${email}`, { show_alert: true });
+});
+
+bot.action(/^show_pass_(.+)$/, async (ctx) => {
+    const password = ctx.match[1];
+    await ctx.answerCbQuery(`🔑 Password: ${password}`, { show_alert: true });
 });
 
 bot.action('final_confirm', async (ctx) => {
@@ -261,7 +260,6 @@ bot.action('final_confirm', async (ctx) => {
         proof: data.proof
     };
 
-    // ইউজারের মাই অর্ডারে সেভ করা
     if (!userOrderHistory[userId]) userOrderHistory[userId] = [];
     userOrderHistory[userId].push({
         packageName: 'AdsPower 10 Days Full Access',
@@ -335,7 +333,6 @@ bot.action(/^view_order_(.+)$/, async (ctx) => {
     });
 });
 
-// অ্যাডমিন কাস্টম ইমেইল ইনপুট শুরু করার ট্রিগার
 bot.action(/^start_custom_pass_(.+)$/, async (ctx) => {
     if (!isAdmin(ctx)) return;
     await ctx.answerCbQuery();
@@ -384,16 +381,15 @@ bot.action(/^inspect_user_(.+)$/, async (ctx) => {
 });
 
 // User clicks Get Login Code
-bot.action(/^get_code_(.+)_([\w@.-]+)$/, async (ctx) => {
+bot.action(/^get_code_(.+)$/, async (ctx) => {
     await ctx.answerCbQuery("Login code request sent to Admin!");
     const user = ctx.from;
     const targetUserId = ctx.match[1];
-    const userEmail = ctx.match[2];
 
     try {
         await ctx.telegram.sendMessage(
             ADMIN_ID, 
-            `🔑 *Login Code Request!*\n\n👤 *User:* ${user.first_name} (\`${targetUserId}\`)\n📧 *Assigned Email:* \`${userEmail}\`\n\nদয়া করে ইউজারকে কোড প্রদান করুন।`
+            `🔑 *Login Code Request from User!*\n\n👤 *User:* ${user.first_name} (\`${targetUserId}\`)\n\nদয়া করে এই ইউজারকে লগইন কোড প্রদান করুন।`
         );
     } catch (err) {}
 
