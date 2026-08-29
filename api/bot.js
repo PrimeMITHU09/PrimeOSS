@@ -170,7 +170,8 @@ async function getPendingOrders() {
             return orders.map(ord => ({
                 name: ord.name,
                 method: ord.method ? ord.method.split('|')[0] : 'Unknown', // decode method
-                userId: ord.user_id
+                userId: ord.user_id,
+                packageName: ord.package_name
             }));
         }
     }
@@ -187,7 +188,8 @@ async function getOrderForUser(userId) {
                 userId: ord.user_id,
                 method: ord.method ? ord.method.split('|')[0] : 'Unknown', // decode method
                 proof: ord.proof,
-                status: ord.status
+                status: ord.status,
+                packageName: ord.package_name
             };
         }
     }
@@ -492,9 +494,23 @@ bot.action('my_order', async (ctx) => {
                 `   📅 *Date:* ${dateStr}\n`;
                 
         if (ord.status === 'Completed') {
-            if (ord.customEmail || ord.customPass) {
-                text += `   📧 *Email:* \`${ord.customEmail || 'N/A'}\`\n` +
-                        `   🔑 *Password:* \`${ord.customPass || 'N/A'}\`\n`;
+            if (ord.customEmail && ord.customEmail.includes(':')) {
+                // Parse multi-account list from the customEmail field
+                const lines = ord.customEmail.split('\n');
+                lines.forEach((line, idx) => {
+                    const parts = line.split(':');
+                    if (parts.length >= 2) {
+                        text += `   *Account #${idx + 1}:*\n` +
+                                `   📧 Email: \`${parts[0].trim()}\`\n` +
+                                `   🔑 Pass: \`${parts[1].trim()}\`\n`;
+                    }
+                });
+            } else {
+                // Single account format
+                if (ord.customEmail || ord.customPass) {
+                    text += `   📧 *Email:* \`${ord.customEmail || 'N/A'}\`\n` +
+                            `   🔑 *Password:* \`${ord.customPass || 'N/A'}\`\n`;
+                }
             }
             if (ord.loginCode) {
                 text += `   ⏳ *Login Code:* \`${ord.loginCode}\`\n`;
@@ -596,7 +612,7 @@ bot.action('faq_logincode', async (ctx) => {
     await ctx.answerCbQuery();
     const text = 
         `🔑 *How to Get Login Code (লগইন কোড সমস্যা সমাধান)*\n\n` +
-        `আপনি যখন প্রথমবার অ্যাকাউন্টটি আপনার ব্রাউজারে লগইন করতে যাবেন, তখন সিকিউরিটির জন্য একটি লগইন কোড (Login Verification Code) চাইতে পারে।\n\n` +
+        `🔑 আপনি যখন প্রথমবার অ্যাকাউন্টটি আপনার ব্রাউজারে লগইন করতে যাবেন, তখন সিকিউরিটির জন্য একটি লগইন কোড (Login Verification Code) চাইতে পারে।\n\n` +
         `১. ব্রাউজারে কোড চাওয়ার পেজটি ওপেন রাখুন।\n` +
         `২. আমাদের টেলিগ্রাম বটের **"🛍 My Order"** এ যান এবং আপনার একটিভ অর্ডারের নিচে থাকা **"🔑 Get Login Code"** বাটনে ক্লিক করুন।\n` +
         `৩. সাথে সাথে অ্যাডমিনের কাছে আপনার কোড রিকোয়েস্ট চলে যাবে।\n` +
@@ -880,38 +896,60 @@ bot.on(['text', 'photo'], async (ctx) => {
                 }
             }
 
-            if (state === 'waiting_for_email' && text) {
-                await updateAdminSession(userId, {
-                    step: 'waiting_for_password',
-                    customEmail: text.trim(),
-                    targetUserId
+            if (state === 'waiting_for_accounts' && text) {
+                const lines = text.trim().split('\n');
+                const parsedAccounts = [];
+
+                lines.forEach(line => {
+                    if (line.includes(':')) {
+                        const parts = line.split(':');
+                        if (parts.length >= 2) {
+                            parsedAccounts.push({
+                                email: parts[0].trim(),
+                                pass: parts[1].trim()
+                            });
+                        }
+                    }
                 });
-                return ctx.reply("🔑 এখন এই অ্যাকাউন্টের **Password** টি লিখে পাঠান:");
-            
-            } else if (state === 'waiting_for_password' && text) {
-                const customPass = text.trim();
-                const customEmail = adminSession.customEmail;
+
+                if (parsedAccounts.length === 0) {
+                    return ctx.reply("❌ ভুল ফরম্যাট! অনুগ্রহ করে প্রতি লাইনে `email:password` ফরম্যাটে লিখে পাঠান:");
+                }
+
                 await clearAdminSession(userId);
 
-                // Update order in Supabase / memory
+                // For 1 account, store raw fields as normal. For multiple, store list in custom_email.
+                const rawCustomEmail = text.trim();
+                const customPassValue = parsedAccounts.length === 1 ? parsedAccounts[0].pass : 'Multi-Account';
+                const customEmailValue = parsedAccounts.length === 1 ? parsedAccounts[0].email : rawCustomEmail;
+
                 if (db.isConfigured()) {
-                    await db.updateOrderStatus(targetUser, 'Completed', customEmail, customPass);
+                    await db.updateOrderStatus(targetUser, 'Completed', customEmailValue, customPassValue);
                 }
                 if (memoryPendingOrders[targetUser]) {
                     memoryPendingOrders[targetUser].status = 'Completed';
                     delete memoryPendingOrders[targetUser];
                 }
 
-                // Add to order history
                 if (!memoryUserOrderHistory[targetUser]) memoryUserOrderHistory[targetUser] = [];
                 memoryUserOrderHistory[targetUser].push({
-                    packageName: 'AdsPower 10 Days Full Access',
+                    packageName: 'AdsPower Accounts',
                     method: 'Manual Delivery',
                     status: 'Completed',
                     createdAt: new Date().toISOString()
                 });
 
                 try {
+                    // Build custom buttons dynamically
+                    const buttons = [];
+                    parsedAccounts.forEach((acc, idx) => {
+                        buttons.push([Markup.button.callback(`📧 Email #${idx + 1}: ${acc.email}`, `copy_email_${acc.email}`)]);
+                        buttons.push([Markup.button.callback(`🔑 Pass #${idx + 1}: ${acc.pass}`, `copy_pass_${acc.pass}`)]);
+                    });
+
+                    buttons.push([Markup.button.callback('🔑 Get Login Code', `get_code_${targetUser}`)]);
+                    buttons.push([Markup.button.callback('📦 AdsPower Details', 'details')]);
+
                     await ctx.telegram.sendMessage(
                         targetUser,
                         "🎉 *Congratulations for your purchase!* ❤️\n\n" +
@@ -919,20 +957,16 @@ bot.on(['text', 'photo'], async (ctx) => {
                         "নিচের বাটনগুলোতে ক্লিক করে আপনার ইমেইল ও পাসওয়ার্ড সহজে কপি করে নিন:",
                         {
                             parse_mode: 'Markdown',
-                            ...Markup.inlineKeyboard([
-                                [Markup.button.callback(`📧 Email: ${customEmail}`, `copy_email_${customEmail}`)],
-                                [Markup.button.callback(`🔑 Password: ${customPass}`, `copy_pass_${customPass}`)],
-                                [Markup.button.callback('🔑 Get Login Code', `get_code_${targetUser}`)],
-                                [Markup.button.callback('📦 AdsPower Details', 'details')]
-                            ])
+                            ...Markup.inlineKeyboard(buttons)
                         }
                     );
-                    return ctx.reply(`✅ Successfully Sent Custom Email & Password to User!`);
+                    return ctx.reply(`✅ Successfully Sent ${parsedAccounts.length} Custom Account(s) & Password(s) to User!`);
                 } catch (err) {
                     return ctx.reply(`❌ ইউজারকে মেসেজ পাঠানো যায়নি।`);
                 }
-            
-            } else if (state === 'waiting_for_login_code' && text) {
+            }
+
+            if (state === 'waiting_for_login_code' && text) {
                 const loginCode = text.trim();
                 await clearAdminSession(userId);
 
@@ -1129,6 +1163,7 @@ bot.action(/^view_order_(.+)$/, async (ctx) => {
                      `🔗 *Username:* @${ord.username}\n` +
                      `🆔 *User ID:* \`${ord.userId}\`\n` +
                      `💳 *Method:* ${ord.method}\n` +
+                     `📦 *Package:* ${ord.packageName}\n` +
                      `📌 *Proof:* \`${ord.proof}\``;
 
     return ctx.reply(detailsMsg, {
@@ -1146,11 +1181,14 @@ bot.action(/^start_custom_pass_(.+)$/, async (ctx) => {
     const targetUserId = ctx.match[1];
 
     await updateAdminSession(ctx.from.id.toString(), {
-        step: 'waiting_for_email',
+        step: 'waiting_for_accounts',
         targetUserId: targetUserId
     });
 
-    return ctx.reply("📧 অনুগ্রহ করে ইউজারের জন্য নির্ধারিত **Email** টি লিখে পাঠান:");
+    return ctx.reply(
+        "📧 অনুগ্রহ করে অ্যাকাউন্ট(সমূহ) নিচের ফরম্যাটে লিখে পাঠান (প্রতি লাইনে একটি করে):\n\n" +
+        "`email:password`"
+    );
 });
 
 bot.action(/^start_reject_order_(.+)$/, async (ctx) => {
@@ -1246,7 +1284,7 @@ bot.action('login_done', async (ctx) => {
     return ctx.reply(
         `❤️ *Thank You for Purchasing from AdsPower Seller BD!*\n` +
         `Take Love : \`${userId}\`\n\n` +
-        `আপনাদের প্রিমিয়াম পাস সফলভাবে অ্যাক্টিভ হয়েছে। আমাদের সেবা নেওয়ার জন্য আপনাকে আন্তরিক ধন্যবাদ! যেকোনো প্রয়োজনে আবার যোগাযোগ করবেন। 🚀\n\n` +
+        `আপনার প্রিমিয়াম পাস সফলভাবে অ্যাক্টিভ হয়েছে। আমাদের সেবা নেওয়ার জন্য আপনাকে আন্তরিক ধন্যবাদ! যেকোনো প্রয়োজনে আবার যোগাযোগ করবেন। 🚀\n\n` +
         `${botUsername}`,
         { parse_mode: 'Markdown' }
     );
