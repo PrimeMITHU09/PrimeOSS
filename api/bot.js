@@ -321,8 +321,9 @@ bot.action('details', async (ctx) => {
         `🛠 *Instant Setup Guide / Support:* অ্যাকাউন্ট লগইন করা থেকে শুরু করে প্রক্সি সেটআপ করার ফুল ফ্রি গাইডলাইন।\n` +
         `🛡 *Replacement / Uptime Guarantee:* ১ দিনের মধ্যে কোনো মেজর টেকনিক্যাল ইস্যু হলে ইনস্ট্যান্ট সাপোর্ট বা অ্যাকাউন্ট রিপ্লেসমেন্ট গ্যারান্টি।\n\n` +
         `> ⏳ *Duration:* 10 Days Full Access\n\n` +
-        `💳 *Price:* 30 TK [1 Account] BD\n` +
-        `💳 *Price:* 25 TK [1+ Account] BD\n\n` +
+        `💳 *Price:* 30 TK [1 Account]\n` +
+        `💳 *Price:* 80 TK [3 Accounts]\n` +
+        `💳 *Price:* 135 TK [5 Accounts]\n\n` +
         `🛒 *Buy Now* বাটন টি ক্লিক করলে সরাসরি পেমেন্ট গেটওয়ে বা আপনার ইনবক্সে চলে যাবে।\n` +
         `💬 *Contact Admin:* @prime8088`;
 
