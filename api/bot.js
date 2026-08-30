@@ -8,6 +8,111 @@ const GROUP_ID = process.env.GROUP_ID || '-5569242233';
 
 const bot = new Telegraf(BOT_TOKEN);
 
+// In-memory fallback for maintenance mode (just in case)
+let memoryMaintenanceMode = false;
+
+async function getMaintenanceMode() {
+    if (db.isConfigured()) {
+        const coupon = await db.getCoupon('SYSTEM_MAINTENANCE_MODE');
+        if (coupon) {
+            return coupon.discount_amount === 1;
+        }
+        return false;
+    }
+    return memoryMaintenanceMode;
+}
+
+async function setMaintenanceMode(enabled) {
+    const val = enabled ? 1 : 0;
+    if (db.isConfigured()) {
+        await db.createCoupon('SYSTEM_MAINTENANCE_MODE', val);
+    } else {
+        memoryMaintenanceMode = enabled;
+    }
+}
+
+// In-memory fallback for notice mode
+let memoryNoticeEnabled = false;
+let memoryNoticeText = "Welcome to AdsPower Seller BD!";
+
+async function getNoticeStatus() {
+    if (db.isConfigured()) {
+        const coupon = await db.getCoupon('SYSTEM_NOTICE_ENABLED');
+        if (coupon) {
+            return coupon.discount_amount === 1;
+        }
+        return false;
+    }
+    return memoryNoticeEnabled;
+}
+
+async function setNoticeStatus(enabled) {
+    const val = enabled ? 1 : 0;
+    if (db.isConfigured()) {
+        await db.createCoupon('SYSTEM_NOTICE_ENABLED', val);
+    } else {
+        memoryNoticeEnabled = enabled;
+    }
+}
+
+async function getNoticeText() {
+    if (db.isConfigured()) {
+        const coupons = await db.getAllCoupons();
+        if (coupons) {
+            const noticeCoupon = coupons.find(cp => cp.code.startsWith('NOTICE_TEXT|'));
+            if (noticeCoupon) {
+                return noticeCoupon.code.split('NOTICE_TEXT|')[1];
+            }
+        }
+    }
+    return memoryNoticeText;
+}
+
+async function setNoticeText(text) {
+    if (db.isConfigured()) {
+        const coupons = await db.getAllCoupons();
+        if (coupons) {
+            const oldNotices = coupons.filter(cp => cp.code.startsWith('NOTICE_TEXT|'));
+            for (const old of oldNotices) {
+                await db.deleteCoupon(old.code);
+            }
+        }
+        await db.createCoupon('NOTICE_TEXT|' + text, 0);
+    } else {
+        memoryNoticeText = text;
+    }
+}
+
+async function checkAndSendNotice(ctx) {
+    const isNoticeEnabled = await getNoticeStatus();
+    if (isNoticeEnabled) {
+        const noticeText = await getNoticeText();
+        const formattedNotice = `🔔 *SPECIAL ANNOUNCEMENT / ঘোষণা* 🔔\n` +
+                                `▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬\n` +
+                                `${noticeText}\n` +
+                                `▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬`;
+        await ctx.reply(formattedNotice, { parse_mode: 'Markdown' });
+    }
+}
+
+// Maintenance Mode Middleware
+bot.use(async (ctx, next) => {
+    if (ctx.from) {
+        const userId = ctx.from.id.toString();
+        if (userId !== ADMIN_ID) {
+            const isMaintenance = await getMaintenanceMode();
+            if (isMaintenance) {
+                if (ctx.callbackQuery) {
+                    return ctx.answerCbQuery("⚠️ Bot is currently under maintenance. Please try again later.", { show_alert: true });
+                }
+                return ctx.reply("⚠️ *দুঃখিত! বটটি বর্তমানে রক্ষণাবেক্ষণ (Maintenance) মোডে রয়েছে।*\n\nখুব শীঘ্রই এটি আবার সচল করা হবে। যেকোনো জরুরি প্রয়োজনে যোগাযোগ করুন: @prime8088", { parse_mode: 'Markdown' });
+            }
+        }
+    }
+    return next();
+});
+
+
 // Fallback in-memory objects in case Supabase is not configured
 const memoryUserSession = {};
 const memoryPendingOrders = {}; 
@@ -280,12 +385,14 @@ function getMainMenu(userName) {
 const adminReplyKeyboard = Markup.keyboard([
     ['⭐ 📦 Pending Orders ⭐', '⭐ 👥 Total Bot Users ⭐'],
     ['📢 Broadcast 📢', '📊 Sales Report 📊'],
-    ['🎟️ Coupons 🎟️', '👑 Close Admin Panel 👑']
+    ['🎟️ Coupons 🎟️', '⚙️ Bot Control ⚙️'],
+    ['👑 Close Admin Panel 👑']
 ]).resize();
 
 // /start কমান্ড
 bot.start(async (ctx) => {
     await saveUser(ctx);
+    await checkAndSendNotice(ctx);
     const userName = ctx.from.first_name || "User";
     const menu = getMainMenu(userName);
     return ctx.reply(menu.text, menu.extra);
@@ -358,6 +465,8 @@ bot.action('close_details', async (ctx) => {
 bot.action('buy_options', async (ctx) => {
     await ctx.answerCbQuery();
     const user = ctx.from;
+
+    await checkAndSendNotice(ctx);
 
     // Optional admin trace alert when checkout starts
     try {
@@ -774,13 +883,71 @@ bot.action('input_payoneer_details', async (ctx) => {
     return ctx.reply("আপনার Payoneer Email এবং Customer ID লিখে পাঠান:");
 });
 
+async function showBotControlPanel(ctx) {
+    const isMaintenance = await getMaintenanceMode();
+    const isNoticeEnabled = await getNoticeStatus();
+    const noticeText = await getNoticeText();
+
+    const botStatusText = isMaintenance ? '🔴 **OFF (Maintenance Mode is ON)**' : '🟢 **ON (Normal Mode is ON)**';
+    const noticeStatusText = isNoticeEnabled ? '🟢 **ENABLED (Active)**' : '🔴 **DISABLED (Inactive)**';
+
+    const panelMsg = `⚙️ *AdsPower Bot Golden Control Panel*\n\n` +
+                     `• **Bot Status:** ${botStatusText}\n` +
+                     `• **Highlight Notice:** ${noticeStatusText}\n\n` +
+                     `📢 **Notice Text:**\n` +
+                     `> ${noticeText}\n\n` +
+                     `নিচের বাটনগুলো ক্লিক করে কন্ট্রোল করুন:`;
+
+    const inlineKeyboard = Markup.inlineKeyboard([
+        [
+            Markup.button.callback(isMaintenance ? '🟢 Turn Bot ON' : '🔴 Turn Bot OFF (Maintenance)', 'maintenance_toggle'),
+        ],
+        [
+            Markup.button.callback(isNoticeEnabled ? '🔕 Disable Notice' : '🔔 Enable Notice', 'notice_toggle'),
+            Markup.button.callback('✍️ Edit Notice Text', 'notice_edit_prompt')
+        ]
+    ]);
+
+    if (ctx.callbackQuery) {
+        try {
+            await ctx.editMessageText(panelMsg, { parse_mode: 'Markdown', ...inlineKeyboard });
+        } catch(e) {}
+    } else {
+        await ctx.reply(panelMsg, { parse_mode: 'Markdown', ...inlineKeyboard });
+    }
+}
+
+bot.action('maintenance_toggle', async (ctx) => {
+    if (!isAdmin(ctx)) return ctx.answerCbQuery("Unauthorized!", { show_alert: true });
+    const current = await getMaintenanceMode();
+    await setMaintenanceMode(!current);
+    await ctx.answerCbQuery(`Bot status changed to ${!current ? 'OFF' : 'ON'}!`);
+    return showBotControlPanel(ctx);
+});
+
+bot.action('notice_toggle', async (ctx) => {
+    if (!isAdmin(ctx)) return ctx.answerCbQuery("Unauthorized!", { show_alert: true });
+    const current = await getNoticeStatus();
+    await setNoticeStatus(!current);
+    await ctx.answerCbQuery(`Highlight notice changed to ${!current ? 'ENABLED' : 'DISABLED'}!`);
+    return showBotControlPanel(ctx);
+});
+
+bot.action('notice_edit_prompt', async (ctx) => {
+    if (!isAdmin(ctx)) return ctx.answerCbQuery("Unauthorized!", { show_alert: true });
+    await ctx.answerCbQuery();
+    const adminId = ctx.from.id.toString();
+    await updateAdminSession(adminId, { step: 'waiting_for_notice_text' });
+    return ctx.reply("📢 অনুগ্রহ করে নতুন নোটিশ/ঘোষণা মেসেজটি লিখে পাঠান (Markdown ফরম্যাট সাপোর্ট করবে):");
+});
+
 // Text / Input Handler
 bot.on(['text', 'photo'], async (ctx) => {
     const userId = ctx.from.id.toString();
     const text = ctx.message ? ctx.message.text : null;
 
     if (isAdmin(ctx)) {
-        if (text === '/admin' || text === '👑 Close Admin Panel 👑' || text === '⭐ 📦 Pending Orders ⭐' || text === '⭐ 👥 Total Bot Users ⭐' || text === '📢 Broadcast 📢' || text === '📊 Sales Report 📊' || text === '🎟️ Coupons 🎟️') {
+        if (text === '/admin' || text === '👑 Close Admin Panel 👑' || text === '⭐ 📦 Pending Orders ⭐' || text === '⭐ 👥 Total Bot Users ⭐' || text === '📢 Broadcast 📢' || text === '📊 Sales Report 📊' || text === '🎟️ Coupons 🎟️' || text === '⚙️ Bot Control ⚙️') {
             if (text === '/admin' || text === '⭐ 📦 Pending Orders ⭐') {
                 if (text === '/admin') {
                     await ctx.reply("👑 *Welcome to Admin Golden Control Panel*", { parse_mode: 'Markdown', ...adminReplyKeyboard });
@@ -810,6 +977,9 @@ bot.on(['text', 'photo'], async (ctx) => {
             }
             if (text === '🎟️ Coupons 🎟️') {
                 return showCouponsMenu(ctx);
+            }
+            if (text === '⚙️ Bot Control ⚙️') {
+                return showBotControlPanel(ctx);
             }
         }
 
@@ -846,6 +1016,13 @@ bot.on(['text', 'photo'], async (ctx) => {
                     `❌ ব্যর্থ হয়েছে: *${fail}* জনের কাছে (বট ব্লক করার কারণে হতে পারে)`,
                     { parse_mode: 'Markdown' }
                 );
+            }
+
+            if (state === 'waiting_for_notice_text' && text) {
+                await clearAdminSession(userId);
+                await setNoticeText(text.trim());
+                await ctx.reply("✅ নতুন নোটিশ মেসেজ সফলভাবে সংরক্ষণ করা হয়েছে!");
+                return showBotControlPanel(ctx);
             }
 
             if (state === 'waiting_for_coupon_code' && text) {
@@ -1001,6 +1178,11 @@ bot.on(['text', 'photo'], async (ctx) => {
     if (session.waitingFor === 'coupon_code' && text) {
         const inputCode = text.trim().toUpperCase();
         await updateUserSession(userId, { waitingFor: null });
+
+        if (inputCode === 'SYSTEM_MAINTENANCE_MODE' || inputCode === 'SYSTEM_NOTICE_ENABLED' || inputCode.startsWith('NOTICE_TEXT|')) {
+            await ctx.reply(`❌ দুঃখিত! এই কুপন কোডটি সঠিক নয় বা এর মেয়াদ শেষ হয়ে গেছে।`);
+            return showPaymentSelectionScreen(ctx, userId);
+        }
 
         let coupon = null;
         if (db.isConfigured()) {
@@ -1303,6 +1485,7 @@ async function showCouponsMenu(ctx) {
     let inlineButtons = [];
     if (coupons && coupons.length > 0) {
         coupons.forEach(cp => {
+            if (cp.code === 'SYSTEM_MAINTENANCE_MODE' || cp.code === 'SYSTEM_NOTICE_ENABLED' || cp.code.startsWith('NOTICE_TEXT|')) return;
             inlineButtons.push([
                 Markup.button.callback(`🎟️ ${cp.code} (-${cp.discount_amount} TK)`, 'noop'),
                 Markup.button.callback('❌ Delete', `delete_coupon_${cp.code}`)
@@ -1356,6 +1539,15 @@ module.exports = async (req, res) => {
             res.status(500).json({ error: 'Error processing update' });
         }
     } else {
-        res.status(200).json({ message: 'AdsPower Bot is running successfully!' });
+        try {
+            // Set bot slash commands list in Telegram
+            await bot.telegram.setMyCommands([
+                { command: 'start', description: 'Start the bot / প্রধান মেনু 🚀' }
+            ]);
+            res.status(200).json({ message: 'AdsPower Bot is running successfully and commands are set!' });
+        } catch (err) {
+            console.error("Failed to set commands:", err);
+            res.status(200).json({ message: 'AdsPower Bot is running successfully!' });
+        }
     }
 };
