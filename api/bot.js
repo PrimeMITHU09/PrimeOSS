@@ -506,10 +506,10 @@ async function sendFakeSaleToGroup() {
         const accountsCount = selectedPkg.name.split(' ')[0];
         const pkgDisplay = `ADSPOWER × ${accountsCount}`;
 
-        const fakeSalesMsg = `> 🟢 *ORDER SUCCESSFUL*\n` +
+        const fakeSalesMsg = `🟢 **ORDER SUCCESSFUL**\n\n` +
                              `╔════════════════════╗\n` +
-                             `  ***🛒 ADSPOWER ACCOUNT***\n` +
-                             `╚════════════════════╝\n` +
+                             `**🛒 ADSPOWER ACCOUNT**\n` +
+                             `╚════════════════════╝\n\n` +
                              `╭──────────────────╮\n` +
                              `│ 🆔 ORDER \`#${orderId}\`\n` +
                              `│ 📦 \`${pkgDisplay}\`\n` +
@@ -517,15 +517,14 @@ async function sendFakeSaleToGroup() {
                              `│ 💳 \`${method.toUpperCase()}\`\n` +
                              `╰──────────────────╯\n\n` +
                              `╭──────────────────╮\n` +
-                             `│ 🔐 **CUSTOMER DATA**   │\n` +
+                             `│ 🔐 **CUSTOMER DATA**\n` +
                              `╰──────────────────╯\n\n` +
-                             ` >👤 \`${name}\`\n` +
-                             `▬▬▬▬▬▬\n` +
-                             ` > 📧 \`${maskedEmail}\`\n` +
-                             `  >🔑 \`••••••••\`\n\n` +
-                             `_📡 STATUS → 🟢 **DELIVERED**_\n` +
-                             `***📊 RATING → ${ratingStars} \`${ratingNum}\`***\n\n` +
-                             `***💬 FEEDBACK RECEIVED***\n\n` +
+                             `> 👤 \`${name}\`\n` +
+                             `> 📧 \`${maskedEmail}\`\n` +
+                             `> 🔑 \`••••••••\`\n\n` +
+                             `📡 STATUS → 🟢 **DELIVERED**\n` +
+                             `📊 RATING → ${ratingStars} \`${ratingNum}\`\n\n` +
+                             `💬 **FEEDBACK RECEIVED**\n\n` +
                              `> ${review}\n\n` +
                              `> 🚀 **ADSPOWER SELLER BD**`;
 
@@ -2102,10 +2101,10 @@ bot.on(['text', 'photo'], async (ctx) => {
                     const accountsCount = pName.match(/\d+/) ? pName.match(/\d+/)[0] : '1';
                     const pkgDisplay = `ADSPOWER × ${accountsCount}`;
 
-                    const realSaleMsg = `> 🟢 *ORDER SUCCESSFUL*\n` +
+                    const realSaleMsg = `🟢 **ORDER SUCCESSFUL**\n\n` +
                                          `╔════════════════════╗\n` +
-                                         `  ***🛒 ADSPOWER ACCOUNT***\n` +
-                                         `╚════════════════════╝\n` +
+                                         `**🛒 ADSPOWER ACCOUNT**\n` +
+                                         `╚════════════════════╝\n\n` +
                                          `╭──────────────────╮\n` +
                                          `│ 🆔 ORDER \`#${orderId}\`\n` +
                                          `│ 📦 \`${pkgDisplay}\`\n` +
@@ -2113,13 +2112,12 @@ bot.on(['text', 'photo'], async (ctx) => {
                                          `│ 💳 \`${pMethod.toUpperCase()}\`\n` +
                                          `╰──────────────────╯\n\n` +
                                          `╭──────────────────╮\n` +
-                                         `│ 🔐 **CUSTOMER DATA**   │\n` +
+                                         `│ 🔐 **CUSTOMER DATA**\n` +
                                          `╰──────────────────╯\n\n` +
-                                         ` >👤 \`${buyerName}\`\n` +
-                                         `▬▬▬▬▬▬\n` +
-                                         ` > 📧 \`${maskedEmail}\`\n` +
-                                         `  >🔑 \`••••••••\`\n\n` +
-                                         `_📡 STATUS → 🟢 **DELIVERED**_\n` +
+                                         `> 👤 \`${buyerName}\`\n` +
+                                         `> 📧 \`${maskedEmail}\`\n` +
+                                         `> 🔑 \`••••••••\`\n\n` +
+                                         `📡 STATUS → 🟢 **DELIVERED**\n\n` +
                                          `> 🚀 **ADSPOWER SELLER BD**`;
 
                     await ctx.telegram.sendMessage(parseInt(GROUP_ID), realSaleMsg, { parse_mode: 'Markdown' });
