@@ -374,9 +374,11 @@ async function sendFakeSaleToGroup() {
 
         // 4 or 5 stars
         const rating = Math.random() > 0.3 ? 5 : 4;
+        const orderId = Math.floor(10000 + Math.random() * 90000);
 
         const fakeSalesMsg = `🛒 *AdsPower Order Completed!* 🛒\n` +
                              `▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬\n` +
+                             `🆔 *Order ID:* \`#${orderId}\`\n` +
                              `📦 *Package:* \`${selectedPkg.name}\`\n` +
                              `💳 *Payment:* \`${method}\`\n` +
                              `💰 *Amount:* \`${selectedPkg.price} TK\`\n` +
@@ -785,12 +787,14 @@ bot.use(async (ctx, next) => {
 bot.start(async (ctx) => {
     const text = ctx.message ? ctx.message.text : '';
     const refMatch = text.match(/^\/start ref_(\d+)$/);
+    let referredByMsg = '';
     if (refMatch) {
         const referrerId = refMatch[1];
         const newUserId = ctx.from.id.toString();
         const isNew = await checkIfUserIsNew(newUserId);
         if (isNew && referrerId !== newUserId) {
             await saveReferral(newUserId, referrerId);
+            referredByMsg = `🎉 *আপনি আপনার বন্ধুর রেফারেল লিংকের মাধ্যমে প্রবেশ করেছেন!*\n\nআপনার প্রথম কেনাকাটা সফলভাবে সম্পন্ন হলে আপনার বন্ধু ৩ টাকা ডিসকাউন্ট কুপন কমিশন পাবেন। ❤️\n\n`;
             try {
                 await ctx.telegram.sendMessage(referrerId, `👥 একজন কাস্টমার আপনার রেফারেল লিংকের মাধ্যমে বটে প্রবেশ করেছেন! তিনি প্রথম অর্ডার সম্পন্ন করলেই আপনি ৩ টাকা ডিসকাউন্ট কুপন পাবেন।`);
             } catch (err) {}
@@ -803,6 +807,9 @@ bot.start(async (ctx) => {
     await checkAndSendNotice(ctx);
     const userName = ctx.from.first_name || "User";
     const menu = getMainMenu(userName);
+    if (referredByMsg) {
+        await ctx.reply(referredByMsg, { parse_mode: 'Markdown' });
+    }
     return ctx.reply(menu.text, menu.extra);
 });
 
@@ -1781,6 +1788,54 @@ bot.on(['text', 'photo'], async (ctx) => {
                     status: 'Completed',
                     createdAt: new Date().toISOString()
                 });
+
+                // Post Real Completed Order to Group in Premium Format
+                try {
+                    let orderId = Math.floor(10000 + Math.random() * 90000);
+                    let buyerName = 'User';
+                    let pricePaid = 30;
+                    let pName = '1 Account AdsPower';
+                    let pMethod = 'bKash';
+
+                    if (db.isConfigured()) {
+                        const orderObj = await db.getOrderForUser(targetUser);
+                        if (orderObj) {
+                            orderId = orderObj.id || orderId;
+                            buyerName = orderObj.name || buyerName;
+                            pricePaid = orderObj.price_paid || orderObj.pricePaid || pricePaid;
+                            pName = orderObj.package_name || pName;
+                            pMethod = orderObj.method || pMethod;
+                        }
+                    } else if (memoryPendingOrders[targetUser]) {
+                        const orderObj = memoryPendingOrders[targetUser];
+                        buyerName = orderObj.name || buyerName;
+                        pricePaid = orderObj.pricePaid || pricePaid;
+                        pName = orderObj.packageName || pName;
+                        pMethod = orderObj.method || pMethod;
+                    }
+
+                    // Format masked email with fixed @emalupe.com domain
+                    const firstLetter = buyerName.substring(0, 2).toLowerCase();
+                    const maskedEmail = `${firstLetter}***@emalupe.com`;
+
+                    const realSaleMsg = `🛒 *AdsPower Order Completed!* 🛒\n` +
+                                         `▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬\n` +
+                                         `🆔 *Order ID:* \`#${orderId}\`\n` +
+                                         `📦 *Package:* \`${pName}\`\n` +
+                                         `💳 *Payment:* \`${pMethod}\`\n` +
+                                         `💰 *Amount:* \`${pricePaid} TK\`\n` +
+                                         `▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬\n` +
+                                         `👤 *Customer:* \`${buyerName}\`\n` +
+                                         `📧 *Email:* \`${maskedEmail}\`\n` +
+                                         `🔑 *Password:* \`••••••••\`\n` +
+                                         `⏳ *Status:* ✅ \`Successfully Delivered\`\n` +
+                                         `▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬\n` +
+                                         `💎 *AdsPower Seller BD* 🚀`;
+
+                    await ctx.telegram.sendMessage(parseInt(GROUP_ID), realSaleMsg, { parse_mode: 'Markdown' });
+                } catch (err) {
+                    console.error("Failed to post real completed order to group:", err.message);
+                }
 
                 try {
                     // Build custom buttons dynamically
