@@ -481,6 +481,7 @@ async function sendFakeSaleToGroup() {
 
         if (!enabled) return;
 
+        const orderId = Math.floor(10000 + Math.random() * 90000);
         const name = fakeNames[Math.floor(Math.random() * fakeNames.length)];
         const review = fakeReviews[Math.floor(Math.random() * fakeReviews.length)];
 
