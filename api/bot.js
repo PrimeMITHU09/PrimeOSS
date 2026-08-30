@@ -95,17 +95,53 @@ async function checkAndSendNotice(ctx) {
     }
 }
 
-// Maintenance Mode Middleware
+function isOutsideSellingHours() {
+    const now = new Date();
+    // Add 6 hours to get Bangladesh Local Time (GMT+6)
+    const bdTime = new Date(now.getTime() + (6 * 60 * 60 * 1000));
+    const hours = bdTime.getUTCHours();
+    
+    // Selling hours are 11:00 AM (11) to 11:00 PM (23) BD local time.
+    return (hours < 11 || hours >= 23);
+}
+
+// Maintenance Mode & Scheduling Middleware
 bot.use(async (ctx, next) => {
     if (ctx.from) {
         const userId = ctx.from.id.toString();
         if (userId !== ADMIN_ID) {
+            // 1. Check manual maintenance mode first
             const isMaintenance = await getMaintenanceMode();
             if (isMaintenance) {
                 if (ctx.callbackQuery) {
                     return ctx.answerCbQuery("⚠️ Bot is currently under maintenance. Please try again later.", { show_alert: true });
                 }
                 return ctx.reply("⚠️ *দুঃখিত! বটটি বর্তমানে রক্ষণাবেক্ষণ (Maintenance) মোডে রয়েছে।*\n\nখুব শীঘ্রই এটি আবার সচল করা হবে। যেকোনো জরুরি প্রয়োজনে যোগাযোগ করুন: @prime8088", { parse_mode: 'Markdown' });
+            }
+
+            // 2. Check scheduled selling hours (11:00 AM - 11:00 PM BD Time)
+            if (isOutsideSellingHours()) {
+                const offHoursMsg = 
+                    `✨ *SELLING TIME* ✨\n` +
+                    `🕚 সকাল ১১:০০টা — রাত ১১:০০টা\n` +
+                    `━━━━━━━━━━━━━━━━━━\n` +
+                    `🛒 এই সময়ের মধ্যে নিয়মিত Selling চলবে।\n` +
+                    `🤖 বট OFF হয়ে যাওয়ার পরেও\n` +
+                    `যদি কারও কোনো অ্যাকাউন্টের প্রয়োজন হয়,\n` +
+                    `তাহলে সরাসরি 👨‍💻 Admin-কে Message করুন।\n` +
+                    `💎 আপনার প্রয়োজন অনুযায়ী\n` +
+                    `কাঙ্ক্ষিত Account নিতে পারবেন।\n` +
+                    `━━━━━━━━━━━━━━━━━━\n` +
+                    `📲 *WhatsApp Support*\n` +
+                    `👉 \`01864339154\`\n` +
+                    `🔗 [WhatsApp Link](https://wa.me/8801864339154)\n` +
+                    `⚡ Fast Service • Trusted • Easy\n` +
+                    `📩 Need an Account? → Contact Admin: @prime8088`;
+
+                if (ctx.callbackQuery) {
+                    return ctx.answerCbQuery("⚠️ Selling is currently closed (11 PM - 11 AM).", { show_alert: true });
+                }
+                return ctx.reply(offHoursMsg, { parse_mode: 'Markdown', disable_web_page_preview: true });
             }
         }
     }
