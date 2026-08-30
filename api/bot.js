@@ -105,6 +105,17 @@ function isOutsideSellingHours() {
     return (hours < 11 || hours >= 23);
 }
 
+async function getLatestCompletedEmail(userId) {
+    const orders = await getUserOrders(userId);
+    if (orders && orders.length > 0) {
+        const completedOrder = orders.find(ord => ord.status === 'Completed');
+        if (completedOrder) {
+            return completedOrder.customEmail || 'N/A';
+        }
+    }
+    return 'N/A';
+}
+
 // Maintenance Mode & Scheduling Middleware
 bot.use(async (ctx, next) => {
     if (ctx.from) {
@@ -401,10 +412,10 @@ async function getUserIdsForBroadcast() {
 // Reusable menu component with FAQ integrated
 function getMainMenu(userName) {
     return {
-        text: `⭐ *AdsPower Seller BD*\n\n` +
-              `🚀 *স্বাগতম ${userName}! আপনি আমাদের লাকি কাস্টমার!* \n\n` +
-              "Unlock Ultimate Multi-Accounting Security & Speed!\n" +
-              "নিচের বাটনগুলো থেকে আপনার প্রয়োজনীয় অপশনটি সিলেক্ট করুন:",
+        text: `⭐️ *AdsPower Seller BD* ⭐️\n\n` +
+              `👋 *স্বাগতম ${userName}! আমাদের শপে আপনাকে অভিনন্দন!* \n\n` +
+              `> 🔒 *Unlock Ultimate Multi-Accounting Security & Speed!*\n\n` +
+              `📌 অনুগ্রহ করে নিচের বাটনগুলো থেকে আপনার প্রয়োজনীয় অপশনটি সিলেক্ট করুন:`,
         extra: {
             parse_mode: 'Markdown',
             ...Markup.inlineKeyboard([
@@ -450,25 +461,23 @@ bot.action('main_menu', async (ctx) => {
 bot.action('details', async (ctx) => {
     await ctx.answerCbQuery();
     const detailsText = 
-        `🚀 *AdsPower Antidetect Browser - 10 Days Premium Pass*\n\n` +
-        `Unlock Ultimate Multi-Accounting Security & Speed!\n` +
-        `আপনি কি Facebook, TikTok, E-commerce, Affiliate Marketing বা Cpa Marketing-এর জন্য একাধিক অ্যাকাউন্ট ম্যানেজ করতে গিয়ে ব্যান বা রেস্ট্রিকশনের সমস্যায় পড়ছেন?\n\n` +
-        `আজই নিন AdsPower 10-Days Premium Access এবং আপনার অনলাইন বিজনেসকে নিয়ে যান অন্য লেভেলে!\n\n` +
-        `> 🌟 *10-Din-er Trial / Package-e Ja Ja Benefits Pacchen*\n\n` +
-        `🔒 *Advanced Fingerprint Protection:* প্রতিটি ব্রাউজার প্রোফাইলের জন্য আলাদা Real Canvas, WebGL, Audio, and Hardware Fingerprint—যাতে ফেসবুক বা অন্য প্ল্যাটফর্ম কখনোই ট্র্যাক করতে না পারে।\n\n` +
-        `🌐 *Unlimited Proxy Integration:* HTTP, HTTPS, SOCKS5, SSH প্রক্সি খুব সহজেই সেটআপ করার সুবিধা। আইপি লিক হওয়ার কোনো ঝুঁকি নেই।\n\n` +
-        `👥 *Team Collaboration & Permission Control:* আপনার টিম মেম্বারদের নির্দিষ্ট প্রোফাইলের অ্যাক্সেস দিতে পারবেন পাসওয়ার্ড শেয়ার না করেই।\n\n` +
-        `🤖 *RPA Automation / Synchronization:* একটি ব্রাউজারে কাজ করলেই বাধ্য ব্রাউজারগুলোতে অটোমেটিক একই কাজ হয়ে যাবে (Multi-window sync)। পুনরাবৃত্তি কাজগুলোর জন্য রয়েছে ফ্রি অটোমেশন ফিচার।\n\n` +
-        `> ⚡️ *Lightning-Fast Speed & Stability:* কোনো ল্যাগ ছাড়াই স্মুথ ব্রাউজিং এবং হাই-পারফরম্যান্স কুকি কুশন ম্যানেজমেন্ট।\n\n` +
-        `> 🎁 *Extra What You Can Offer (স্পেশাল অফার ও সার্ভিস)*\n\n` +
-        `🛠 *Instant Setup Guide / Support:* অ্যাকাউন্ট লগইন করা থেকে শুরু করে প্রক্সি সেটআপ করার ফুল ফ্রি গাইডলাইন।\n` +
-        `🛡 *Replacement / Uptime Guarantee:* ১ দিনের মধ্যে কোনো মেজর টেকনিক্যাল ইস্যু হলে ইনস্ট্যান্ট সাপোর্ট বা অ্যাকাউন্ট রিপ্লেসমেন্ট গ্যারান্টি।\n\n` +
-        `> ⏳ *Duration:* 10 Days Full Access\n\n` +
-        `💳 *Price:* 30 TK [1 Account]\n` +
-        `💳 *Price:* 80 TK [3 Accounts]\n` +
-        `💳 *Price:* 135 TK [5 Accounts]\n\n` +
-        `🛒 *Buy Now* বাটন টি ক্লিক করলে সরাসরি পেমেন্ট গেটওয়ে বা আপনার ইনবক্সে চলে যাবে।\n` +
-        `💬 *Contact Admin:* @prime8088`;
+        `💎 *AdsPower Browser Premium Pass* 💎\n` +
+        `━━━━━━━━━━━━━━━━━━\n` +
+        `> *Unlock Ultimate Multi-Accounting Security & Speed!*\n\n` +
+        `আপনি কি Facebook, TikTok, E-commerce, or Airdrop-এর একাধিক অ্যাকাউন্ট ম্যানেজ করতে গিয়ে ব্যান বা রেস্ট্রিকশনের সমস্যায় পড়ছেন? আজই নিন AdsPower Premium Access এবং অ্যাকাউন্ট ব্যান হওয়া চিরতরে বন্ধ করুন!\n\n` +
+        `✨ *Package Benefits & Features:* ✨\n` +
+        `• 🔒 *Canvas & WebGL Fingerprint Protection:* প্রতিটি প্রোফাইলের জন্য আলাদা Real Canvas, WebGL, এবং Hardware Fingerprint যাতে সাইটগুলো ট্র্যাক করতে না পারে।\n` +
+        `• 🌐 *Unlimited Proxy Integration:* HTTP, HTTPS, SOCKS5 প্রক্সি খুব সহজেই সেটআপ করার সুবিধা। আইপি লিক হওয়ার কোনো ঝুঁকি নেই।\n` +
+        `• 👥 *Team Collaboration & Sync:* আপনার টিম মেম্বারদের নির্দিষ্ট ব্রাউজার প্রোফাইলের অ্যাক্সেস দিতে পারবেন পাসওয়ার্ড শেয়ার না করেই।\n` +
+        `• 🤖 *RPA Automation & Synchronizer:* এক ব্রাউজারে কাজ করলেই বাকি ব্রাউজারগুলোতে অটোমেটিক একই কাজ হয়ে যাবে (Multi-window sync)।\n\n` +
+        `💸 *Premium Package Pricing:* 💸\n` +
+        `• 💳 1 Account AdsPower = *30 TK*\n` +
+        `• 💳 3 Accounts AdsPower = *80 TK*\n` +
+        `• 💳 5 Accounts AdsPower = *135 TK*\n\n` +
+        `⏳ *Duration:* 10 Days Full Access\n` +
+        `🛡 *Uptime Guarantee:* ২৪ ঘণ্টার ফুল সাপোর্ট বা অ্যাকাউন্ট রিপ্লেসমেন্ট গ্যারান্টি।\n` +
+        `━━━━━━━━━━━━━━━━━━\n` +
+        `👇 নিচে ক্লিক করে সরাসরি পেমেন্ট গেটওয়েতে চলে যান:`;
 
     try {
         await ctx.editMessageText(detailsText, {
@@ -519,8 +528,10 @@ bot.action('buy_options', async (ctx) => {
     // Reset applied coupon when user selects a new package
     await updateUserSession(user.id.toString(), { appliedCoupon: '', discount: 0 });
 
-    const pkgText = "⭐ *AdsPower Seller BD*\n✨ *Select Packages (প্যাকেজ সিলেক্ট করুন)*:\n\n" +
-                    "নিচের অপশনগুলো থেকে আপনার প্রয়োজনীয় প্যাকেজটি সিলেক্ট করুন:";
+    const pkgText = `⭐️ *AdsPower Seller BD* ⭐️\n` +
+                    `📦 *Select Packages / প্যাকেজ সিলেক্ট করুন*:\n` +
+                    `━━━━━━━━━━━━━━━━━━\n\n` +
+                    `📌 নিচের অপশনগুলো থেকে আপনার প্রয়োজনীয় প্যাকেজটি সিলেক্ট করুন:`;
     const pkgExtra = {
         parse_mode: 'Markdown',
         ...Markup.inlineKeyboard([
@@ -547,14 +558,16 @@ async function showPaymentSelectionScreen(ctx, userId) {
 
     let couponInfo = "";
     if (session.appliedCoupon) {
-        couponInfo = `\n🎟️ *Applied Coupon:* \`${session.appliedCoupon}\` (-${discount} TK)\n`;
+        couponInfo = `🎟️ *Applied Coupon:* \`${session.appliedCoupon}\` (-${discount} TK)\n`;
     }
 
-    const buyText = `📦 *Selected Package:* ${session.packageName} (${price} TK)\n` +
+    const buyText = `🛒 *Checkout Summary* 🛒\n` +
+                    `━━━━━━━━━━━━━━━━━━\n` +
+                    `📦 *Package:* \`${session.packageName}\` (${price} TK)\n` +
                     couponInfo +
-                    `💰 *Total Amount to Pay:* *${finalPrice} TK*\n\n` +
-                    `✨ *Select Payment Method*\n` +
-                    `পেমেন্ট মেথড সিলেক্ট করুন:`;
+                    `💰 *Total Payable:* *${finalPrice} TK*\n` +
+                    `━━━━━━━━━━━━━━━━━━\n\n` +
+                    `✨ *Select Payment Method / পেমেন্ট মেথড সিলেক্ট করুন:*`;
     
     const buyExtra = {
         parse_mode: 'Markdown',
@@ -598,7 +611,14 @@ bot.action('apply_coupon_prompt', async (ctx) => {
 bot.action('profile', async (ctx) => {
     await ctx.answerCbQuery();
     const user = ctx.from;
-    return ctx.reply(`👤 *My Profile Info*\n\n• Name: ${user.first_name}\n• Username: @${user.username || 'N/A'}\n• User ID: \`${user.id}\``, {
+    const profileText = `👤 *My Profile Info / আমার প্রোফাইল* 👤\n` +
+                        `━━━━━━━━━━━━━━━━━━\n` +
+                        `• *Name:* \`${user.first_name}\`\n` +
+                        `• *Username:* @${user.username || 'N/A'}\n` +
+                        `• *User ID:* \`${user.id}\` (ক্লিক করে কপি করুন)\n` +
+                        `━━━━━━━━━━━━━━━━━━\n` +
+                        `💎 *AdsPower Seller BD* এর সাথে থাকার জন্য ধন্যবাদ!`;
+    return ctx.reply(profileText, {
         parse_mode: 'Markdown',
         ...Markup.inlineKeyboard([[Markup.button.callback('⬅️ Back to Menu', 'main_menu')]])
     });
@@ -610,13 +630,17 @@ bot.action('my_order', async (ctx) => {
     const history = await getUserOrders(userId);
 
     if (!history || history.length === 0) {
-        return ctx.reply("🛍 *My Orders:* আপনার কোনো পূর্ববর্তী অর্ডার নেই।", {
+        return ctx.reply(
+            `🛍 *Your Orders / আপনার অর্ডার* 🛍\n` +
+            `━━━━━━━━━━━━━━━━━━\n\n` +
+            `> ❌ আপনার কোনো পূর্ববর্তী অর্ডার পাওয়া যায়নি।`, {
             parse_mode: 'Markdown',
             ...Markup.inlineKeyboard([[Markup.button.callback('⬅️ Back to Menu', 'main_menu')]])
         });
     }
 
-    let text = "🛍 *Your Order History (লাইভ অর্ডার ট্র্যাকিং):*\n\n";
+    let text = `🛍 *Your Order History / লাইভ ট্র্যাকিং* 🛍\n` +
+               `━━━━━━━━━━━━━━━━━━\n\n`;
     history.forEach((ord, index) => {
         const dateStr = ord.createdAt ? new Date(ord.createdAt).toLocaleString() : 'N/A';
         
@@ -625,7 +649,7 @@ bot.action('my_order', async (ctx) => {
         
         if (ord.status === 'Completed') {
             statusEmoji = "✅";
-            statusTextBengali = "সম্পন্ন হয়েছে (Account Delivered)";
+            statusTextBengali = "সম্পন্ন হয়েছে (Delivered)";
         } else if (ord.status === 'Rejected') {
             statusEmoji = "❌";
             statusTextBengali = "বাতিল করা হয়েছে (Rejected)";
@@ -634,14 +658,14 @@ bot.action('my_order', async (ctx) => {
             statusTextBengali = "বাতিল করা হয়েছে (Cancelled)";
         }
 
-        text += `${index + 1}. 📦 *Package:* ${ord.packageName}\n` +
-                `   💳 *Method:* ${ord.method ? ord.method.split('|')[0] : 'Unknown'}\n` +
-                `   ${statusEmoji} *Status:* ${ord.status} (${statusTextBengali})\n` +
-                `   📅 *Date:* ${dateStr}\n`;
+        text += `📦 *Order #${index + 1}:* \`${ord.packageName}\`\n` +
+                `   💳 *Method:* \`${ord.method ? ord.method.split('|')[0] : 'Unknown'}\`\n` +
+                `   ${statusEmoji} *Status:* *${ord.status}* (${statusTextBengali})\n` +
+                `   📅 *Date:* \`${dateStr}\`\n`;
                 
         if (ord.status === 'Completed') {
+            text += `   ━━━━━━━━━━━━━━━━━━\n`;
             if (ord.customEmail && ord.customEmail.includes(':')) {
-                // Parse multi-account list from the customEmail field
                 const lines = ord.customEmail.split('\n');
                 lines.forEach((line, idx) => {
                     const parts = line.split(':');
@@ -652,7 +676,6 @@ bot.action('my_order', async (ctx) => {
                     }
                 });
             } else {
-                // Single account format
                 if (ord.customEmail || ord.customPass) {
                     text += `   📧 *Email:* \`${ord.customEmail || 'N/A'}\`\n` +
                             `   🔑 *Password:* \`${ord.customPass || 'N/A'}\`\n`;
@@ -661,6 +684,7 @@ bot.action('my_order', async (ctx) => {
             if (ord.loginCode) {
                 text += `   ⏳ *Login Code:* \`${ord.loginCode}\`\n`;
             }
+            text += `   ━━━━━━━━━━━━━━━━━━\n`;
         }
         text += `\n`;
     });
@@ -688,14 +712,22 @@ bot.action('clear_my_order', async (ctx) => {
     await ctx.answerCbQuery("Order history cleared!");
     const userId = ctx.from.id.toString();
     await clearUserOrders(userId);
-    return ctx.reply("🗑 আপনার অর্ডার হিস্ট্রি সফলভাবে মুছে ফেলা হয়েছে।", {
+    return ctx.reply(
+        `🗑 *History Cleared / হিস্ট্রি ডিলিট* 🗑\n` +
+        `━━━━━━━━━━━━━━━━━━\n\n` +
+        `> ✅ আপনার অর্ডার হিস্ট্রি সফলভাবে মুছে ফেলা হয়েছে।`, {
+        parse_mode: 'Markdown',
         ...Markup.inlineKeyboard([[Markup.button.callback('⬅️ Back to Menu', 'main_menu')]])
     });
 });
 
 bot.action('transaction', async (ctx) => {
     await ctx.answerCbQuery();
-    return ctx.reply("🧾 *Transaction Records:* Verified", {
+    const txText = `🧾 *Transaction Status / লেনদেন* 🧾\n` +
+                   `━━━━━━━━━━━━━━━━━━\n` +
+                   `> 🟢 **Verified Account Profile**\n\n` +
+                   `🔒 আপনার সকল লেনদেন এবং অ্যাকাউন্ট তথ্য আমাদের সিস্টেমে সম্পূর্ণ নিরাপদ ও সুরক্ষিত রয়েছে।`;
+    return ctx.reply(txText, {
         parse_mode: 'Markdown',
         ...Markup.inlineKeyboard([[Markup.button.callback('⬅️ Back to Menu', 'main_menu')]])
     });
@@ -703,7 +735,12 @@ bot.action('transaction', async (ctx) => {
 
 bot.action('support', async (ctx) => {
     await ctx.answerCbQuery();
-    return ctx.reply("👑 *Admin Contact:* @prime8088", {
+    const supportText = `📞 *Contact Support / সাহায্য কেন্দ্র* 📞\n` +
+                        `━━━━━━━━━━━━━━━━━━\n` +
+                        `> 👨‍💻 *Admin Username:* @prime8088\n` +
+                        `> 📲 *WhatsApp:* \`01864339154\`\n\n` +
+                        `💬 যেকোনো ধরনের সমস্যা বা সাহায্যের জন্য সরাসরি এডমিনের সাথে যোগাযোগ করুন। আমরা আপনাকে দ্রুত সমাধান দিতে সদা প্রস্তুত!`;
+    return ctx.reply(supportText, {
         parse_mode: 'Markdown',
         ...Markup.inlineKeyboard([[Markup.button.callback('⬅️ Back to Menu', 'main_menu')]])
     });
@@ -712,8 +749,9 @@ bot.action('support', async (ctx) => {
 // FAQ Section Actions
 bot.action('faq_menu', async (ctx) => {
     await ctx.answerCbQuery();
-    const faqText = "❓ *AdsPower Help Center & FAQ Guide*\n\n" +
-                    "আপনার প্রয়োজনীয় প্রশ্নের সমাধান পেতে নিচের যেকোনো একটি টপিক সিলেক্ট করুন:";
+    const faqText = `❓ *AdsPower Help Center & FAQ Guide* ❓\n` +
+                    `━━━━━━━━━━━━━━━━━━\n\n` +
+                    `📌 আপনার প্রয়োজনীয় প্রশ্নের সমাধান পেতে নিচের যেকোনো একটি টপিক সিলেক্ট করুন:`;
     const faqExtra = {
         parse_mode: 'Markdown',
         ...Markup.inlineKeyboard([
@@ -733,12 +771,13 @@ bot.action('faq_menu', async (ctx) => {
 bot.action('faq_proxy', async (ctx) => {
     await ctx.answerCbQuery();
     const text = 
-        `🛠 *AdsPower Browser - Proxy Setup Guide*\n\n` +
-        `একাধিক অ্যাকাউন্ট সুরক্ষিত রাখতে প্রক্সি সেটআপ করা অত্যন্ত জরুরি। নিচের নিয়মগুলো মেনে সেটআপ করুন:\n\n` +
+        `🛠 *AdsPower - Proxy Setup Guide* 🛠\n` +
+        `━━━━━━━━━━━━━━━━━━\n` +
+        `> *একাধিক অ্যাকাউন্ট সুরক্ষিত রাখতে প্রক্সি সেটআপ করা অত্যন্ত জরুরি।*\n\n` +
         `১. *AdsPower Browser* ওপেন করে **"Profiles"** সেকশনে যান এবং **"Single Import"**-এ ক্লিক করুন।\n` +
-        `২. **"Proxy Information"** সেকশনে গিয়ে **"Proxy Type"** সিলেক্ট করুন (SOCKS5, HTTP বা HTTPS)।\n` +
+        `২. **"Proxy Information"** সেকশনে গিয়ে **"Proxy Type"** সিলেক্ট করুন (Socks5/HTTP/HTTPS)।\n` +
         `৩. আপনার প্রক্সি প্রভাইডারের দেওয়া আইপি ও পোর্ট ইনপুট করুন। ফরম্যাট: \`IP:Port\` অথবা ইউজারনেম-পাসওয়ার্ড থাকলে \`IP:Port:Username:Password\`।\n` +
-        `৪. **"Check Proxy"** বাটনে ক্লিক করে কানেকশন টেস্ট করুন। যদি সবুজ সংকেত (Green check) আসে, তবে আপনার প্রক্সি সফলভাবে কাজ করছে।\n\n` +
+        `৪. **"Check Proxy"** বাটনে ক্লিক করে কানেকশন টেস্ট করুন। সবুজ সংকেত আসলে আপনার প্রক্সি সফলভাবে কাজ করছে।\n\n` +
         `⚠️ *পরামর্শ:* লিক এড়াতে সর্বদা প্রিমিয়াম ডেডিকেটেড আইপি ব্যবহার করবেন। ফ্রি প্রক্সি ব্যবহার করলে অ্যাকাউন্ট ব্যান হওয়ার ঝুঁকি থাকে।`;
     
     try {
@@ -757,12 +796,13 @@ bot.action('faq_proxy', async (ctx) => {
 bot.action('faq_logincode', async (ctx) => {
     await ctx.answerCbQuery();
     const text = 
-        `🔑 *How to Get Login Code (লগইন কোড সমস্যা সমাধান)*\n\n` +
-        `🔑 আপনি যখন প্রথমবার অ্যাকাউন্টটি আপনার ব্রাউজারে লগইন করতে যাবেন, তখন সিকিউরিটির জন্য একটি লগইন কোড (Login Verification Code) চাইতে পারে।\n\n` +
+        `🔑 *How to Get Login Code* 🔑\n` +
+        `━━━━━━━━━━━━━━━━━━\n` +
+        `> *অ্যাকাউন্টে লগইন করার জন্য কোড নেওয়ার নিয়ম:*\n\n` +
         `১. ব্রাউজারে কোড চাওয়ার পেজটি ওপেন রাখুন।\n` +
         `২. আমাদের টেলিগ্রাম বটের **"🛍 My Order"** এ যান এবং আপনার একটিভ অর্ডারের নিচে থাকা **"🔑 Get Login Code"** বাটনে ক্লিক করুন।\n` +
         `৩. সাথে সাথে অ্যাডমিনের কাছে আপনার কোড রিকোয়েস্ট চলে যাবে।\n` +
-        `৪. অ্যাডমিন কোডটি দেওয়ার সাথে সাথে আপনার চ্যাটে একটি নোটিফিকেশন আসবে। সেখানে ওয়ান-ক্লিক কপি বাটন থাকবে। কোডটি কপি করে ব্রাউজারে বসিয়ে লগইন সম্পূর্ণ করুন।`;
+        `৪. অ্যাডমিন কোডটি দেওয়ার সাথে সাথে আপনার চ্যাটে ওয়ান-ক্লিক কপি বাটনসহ কোডটি চলে আসবে। কোডটি কপি করে ব্রাউজারে বসিয়ে লগইন সম্পূর্ণ করুন।`;
     
     try {
         await ctx.editMessageText(text, {
@@ -780,13 +820,14 @@ bot.action('faq_logincode', async (ctx) => {
 bot.action('faq_replacement', async (ctx) => {
     await ctx.answerCbQuery();
     const text = 
-        `🛡 *AdsPower Seller BD - Warranty & Replacement Policy*\n\n` +
-        `আমরা আমাদের গ্রাহকদের সর্বোচ্চ সার্ভিস দেওয়ার চেষ্টা করি। রিপ্লেসমেন্টের ক্ষেত্রে নিচের নিয়মগুলো প্রযোজ্য হবে:\n\n` +
-        `• *২৪ ঘণ্টার গ্যারান্টি:* অ্যাকাউন্ট ডেলিভারি নেওয়ার পর প্রথম ২৪ ঘণ্টার মধ্যে কোনো মেজর টেকনিক্যাল সমস্যা বা লগইন এরর হলে সম্পূর্ণ ফ্রিতে অ্যাকাউন্ট রিপ্লেস করে দেওয়া হবে।\n` +
-        `• *কখন রিপ্লেসমেন্ট পাবেন না:*\n` +
-        `  ১. ফ্রি বা নিম্নমানের আইপি/প্রক্সি ব্যবহারের কারণে যদি অ্যাকাউন্ট ব্যান বা রেস্ট্রিক্ট হয়।\n` +
-        `  ২. ফেসবুক বা সোশ্যাল মিডিয়ার নিজস্ব সিকিউরিটি অ্যালগরিদমের পলিসি ভায়োলেট করলে (যেমন: অতিরিক্ত মেসেজ বা স্প্যামিং করা)।\n\n` +
-        `💬 যেকোনো তথ্যের জন্য অ্যাডমিনের সাথে যোগাযোগ করুন: @prime8088`;
+        `🛡 *Warranty & Replacement Policy* 🛡\n` +
+        `━━━━━━━━━━━━━━━━━━\n` +
+        `> *রিপ্লেসমেন্ট পেতে নিচের নিয়মগুলো মনোযোগ দিয়ে পড়ুন:*\n\n` +
+        `• 🟢 *২৪ ঘণ্টার গ্যারান্টি:* অ্যাকাউন্ট ডেলিভারি নেওয়ার পর প্রথম ২৪ ঘণ্টার মধ্যে কোনো মেজর লগইন এরর বা টেকনিক্যাল সমস্যা হলে সম্পূর্ণ ফ্রিতে অ্যাকাউন্ট রিপ্লেস করে দেওয়া হবে।\n\n` +
+        `• 🔴 *কখন রিপ্লেসমেন্ট পাবেন না:*\n` +
+        `  ১. ফ্রি বা নিম্নমানের আইপি/প্রক্সি ব্যবহারের কারণে যদি অ্যাকাউন্ট রেস্ট্রিক্ট হয়।\n` +
+        `  ২. ফেসবুক বা সোশ্যাল মিডিয়ার নিজস্ব সিকিউরিটি পলিসি ভঙ্গ করলে (যেমন: অতিরিক্ত স্প্যামিং করা)।\n\n` +
+        `💬 যেকোনো জরুরি তথ্যের জন্য অ্যাডমিনের সাথে যোগাযোগ করুন: @prime8088`;
     
     try {
         await ctx.editMessageText(text, {
@@ -810,12 +851,14 @@ bot.action('pay_bkash', async (ctx) => {
     const finalPrice = Math.max(0, session.price - session.discount);
     
     return ctx.reply(
-        `💳 **bKash Payment Details:**\n` +
-        `📞 Send Money: \`01864339154\`\n` +
-        `💰 Amount to Pay: *${finalPrice} TK*\n` +
-        (session.appliedCoupon ? `🎟️ Discount Coupon: *${session.appliedCoupon}* (-${session.discount} TK)\n` : '') +
-        `📦 Package: *${session.packageName}*\n\n` +
-        `নিচের বাটনে ক্লিক করে TrxID দিন:`,
+        `💎 *bKash Payment Details* 💎\n` +
+        `━━━━━━━━━━━━━━━━━━\n` +
+        `📞 *Send Money Number:* \`01864339154\` (Personal)\n` +
+        `📦 *Selected Package:* \`${session.packageName}\`\n` +
+        (session.appliedCoupon ? `🎟️ *Applied Coupon:* \`${session.appliedCoupon}\` (-${session.discount} TK)\n` : '') +
+        `💰 *Total Payable:* *${finalPrice} TK*\n` +
+        `━━━━━━━━━━━━━━━━━━\n\n` +
+        `👇 পেমেন্ট করার পর নিচের বাটনে ক্লিক করে *TrxID* দিন:`,
         {
             parse_mode: 'Markdown',
             ...Markup.inlineKeyboard([
@@ -834,12 +877,14 @@ bot.action('pay_nagad', async (ctx) => {
     const finalPrice = Math.max(0, session.price - session.discount);
     
     return ctx.reply(
-        `💳 **Nagad Payment Details:**\n` +
-        `📞 Send Money: \`01864339154\`\n` +
-        `💰 Amount to Pay: *${finalPrice} TK*\n` +
-        (session.appliedCoupon ? `🎟️ Discount Coupon: *${session.appliedCoupon}* (-${session.discount} TK)\n` : '') +
-        `📦 Package: *${session.packageName}*\n\n` +
-        `নিচের বাটনে ক্লিক করে TrxID দিন:`,
+        `💎 *Nagad Payment Details* 💎\n` +
+        `━━━━━━━━━━━━━━━━━━\n` +
+        `📞 *Send Money Number:* \`01864339154\` (Personal)\n` +
+        `📦 *Selected Package:* \`${session.packageName}\`\n` +
+        (session.appliedCoupon ? `🎟️ *Applied Coupon:* \`${session.appliedCoupon}\` (-${session.discount} TK)\n` : '') +
+        `💰 *Total Payable:* *${finalPrice} TK*\n` +
+        `━━━━━━━━━━━━━━━━━━\n\n` +
+        `👇 পেমেন্ট করার পর নিচের বাটনে ক্লিক করে *TrxID* দিন:`,
         {
             parse_mode: 'Markdown',
             ...Markup.inlineKeyboard([
@@ -858,12 +903,14 @@ bot.action('pay_binance', async (ctx) => {
     const finalPrice = Math.max(0, session.price - session.discount);
     
     return ctx.reply(
-        `🌐 **Binance Payment Details:**\n` +
-        `📌 Pay ID: \`955102483\`\n` +
-        `💰 Amount to Pay: *${finalPrice} TK* (or USDT equivalent)\n` +
-        (session.appliedCoupon ? `🎟️ Discount Coupon: *${session.appliedCoupon}* (-${session.discount} TK)\n` : '') +
-        `📦 Package: *${session.packageName}*\n\n` +
-        `স্ক্রিনশট বা TxID দিন:`,
+        `💎 *Binance Payment Details* 💎\n` +
+        `━━━━━━━━━━━━━━━━━━\n` +
+        `📌 *Pay ID:* \`955102483\`\n` +
+        `📦 *Selected Package:* \`${session.packageName}\`\n` +
+        (session.appliedCoupon ? `🎟️ *Applied Coupon:* \`${session.appliedCoupon}\` (-${session.discount} TK)\n` : '') +
+        `💰 *Total Payable:* *${finalPrice} TK* (or USDT equivalent)\n` +
+        `━━━━━━━━━━━━━━━━━━\n\n` +
+        `👇 পেমেন্ট করার পর নিচের বাটনে ক্লিক করে স্ক্রিনশট বা TxID দিন:`,
         {
             parse_mode: 'Markdown',
             ...Markup.inlineKeyboard([
@@ -882,12 +929,14 @@ bot.action('pay_payoneer', async (ctx) => {
     const finalPrice = Math.max(0, session.price - session.discount);
     
     return ctx.reply(
-        `🌐 **Payoneer Details:**\n` +
-        `📧 Email: \`mithuchandra647@gmail.com\`\n` +
-        `💰 Amount to Pay: *${finalPrice} TK* (or USD equivalent)\n` +
-        (session.appliedCoupon ? `🎟️ Discount Coupon: *${session.appliedCoupon}* (-${session.discount} TK)\n` : '') +
-        `📦 Package: *${session.packageName}*\n\n` +
-        `Details দিন:`,
+        `💎 *Payoneer Payment Details* 💎\n` +
+        `━━━━━━━━━━━━━━━━━━\n` +
+        `📧 *Email:* \`mithuchandra647@gmail.com\`\n` +
+        `📦 *Selected Package:* \`${session.packageName}\`\n` +
+        (session.appliedCoupon ? `🎟️ *Applied Coupon:* \`${session.appliedCoupon}\` (-${session.discount} TK)\n` : '') +
+        `💰 *Total Payable:* *${finalPrice} TK* (or USD equivalent)\n` +
+        `━━━━━━━━━━━━━━━━━━\n\n` +
+        `👇 পেমেন্ট করার পর নিচের বাটনে ক্লিক করে Details দিন:`,
         {
             parse_mode: 'Markdown',
             ...Markup.inlineKeyboard([
@@ -1166,9 +1215,10 @@ bot.on(['text', 'photo'], async (ctx) => {
 
                     await ctx.telegram.sendMessage(
                         targetUser,
-                        "🎉 *Congratulations for your purchase!* ❤️\n\n" +
-                        "আপনার পেমেন্ট সফলভাবে ভেরিফাই ও কনফার্ম হয়েছে!\n" +
-                        "নিচের বাটনগুলোতে ক্লিক করে আপনার ইমেইল ও পাসওয়ার্ড সহজে কপি করে নিন:",
+                        `🎉 *Congratulations on Your Purchase!* 💎\n` +
+                        `━━━━━━━━━━━━━━━━━━\n` +
+                        `> *আপনার পেমেন্ট সফলভাবে ভেরিফাই ও কনফার্ম করা হয়েছে!*\n\n` +
+                        `👇 নিচের বাটনগুলোতে ক্লিক করে আপনার ইমেইল ও পাসওয়ার্ড এক ক্লিকে কপি করে নিন:`,
                         {
                             parse_mode: 'Markdown',
                             ...Markup.inlineKeyboard(buttons)
@@ -1317,30 +1367,33 @@ bot.action('final_confirm', async (ctx) => {
         date: new Date().toLocaleString()
     });
 
-    let proofText = `📦 *Order Name:* ${packageName}\n` +
-                    (session.appliedCoupon ? `🎟️ *Coupon:* ${session.appliedCoupon} (-${discount} TK)\n` : '') +
-                    `💰 *Price:* ${finalPrice} TK\n` +
-                    `💳 *Payment Method:* ${method}\n` +
-                    `👤 *User Name:* ${user.first_name || 'User'}\n` +
+    let proofText = `🚨 *NEW ORDER RECEIVED* 🚨\n` +
+                    `━━━━━━━━━━━━━━━━━━\n` +
+                    `📦 *Package:* \`${packageName}\`\n` +
+                    `💳 *Payment Method:* \`${method}\`\n` +
+                    `💰 *Price Paid:* *${finalPrice} TK*\n` +
+                    (session.appliedCoupon ? `🎟️ *Coupon:* \`${session.appliedCoupon}\` (-${discount} TK)\n` : '') +
+                    `━━━━━━━━━━━━━━━━━━\n\n` +
+                    `👤 *Customer:* ${user.first_name || 'User'}\n` +
                     `🔗 *Username:* @${user.username || 'N/A'}\n` +
                     `🆔 *User ID:* \`${userId}\`\n` +
-                    `📌 *Proof:* \`${proof}\``;
+                    `📌 *Proof (TrxID/Details):* \`${proof}\``;
 
     try {
-        await ctx.telegram.sendMessage(ADMIN_ID, `🚨 *New Order Received!*\n\n` + proofText, { parse_mode: 'Markdown' });
+        await ctx.telegram.sendMessage(ADMIN_ID, proofText, { parse_mode: 'Markdown' });
     } catch (err) {}
 
     try {
-        await ctx.telegram.sendMessage(GROUP_ID, `🚨 *New Order Received (Group Log)!*\n\n` + proofText, { parse_mode: 'Markdown' });
+        await ctx.telegram.sendMessage(GROUP_ID, proofText, { parse_mode: 'Markdown' });
     } catch (err) {}
 
     // Reset user session applied coupon and discount after placing order
     await updateUserSession(userId, { appliedCoupon: '', discount: 0 });
 
     return ctx.reply(
-        "⏳ *Payment Request Submitted Successfully!* \n\n" +
-        "আপনার পেমেন্টটি সফলভাবে জমা হয়েছে। অ্যাডমিন পেমেন্ট চেক করছেন...\n" +
-        "দয়া করে অপেক্ষা করুন! ❤️",
+        `✅ *Payment Request Submitted!* ⏳\n\n` +
+        `> আপনার পেমেন্ট ইনফরমেশন সফলভাবে জমা হয়েছে। আমাদের অ্যাডমিন পেমেন্টটি ভেরিফাই করছেন।\n\n` +
+        `☕ *দয়া করে কিছুক্ষণ অপেক্ষা করুন। অর্ডার সম্পূর্ণ হলে আপনাকে চ্যাটে কোডসহ জানানো হবে!* ❤️`,
         { parse_mode: 'Markdown' }
     );
 });
@@ -1466,11 +1519,15 @@ bot.action(/^get_code_(.+)$/, async (ctx) => {
     await ctx.answerCbQuery("Login code request sent to Admin!");
     const user = ctx.from;
     const targetUserId = ctx.match[1];
+    const email = await getLatestCompletedEmail(targetUserId);
 
     try {
         await ctx.telegram.sendMessage(
             ADMIN_ID, 
-            `🔑 *Login Code Request from User!*\n\n👤 *User:* ${user.first_name} (\`${targetUserId}\`)\n\nদয়া করে এই ইউজারকে লগইন কোড প্রদান করুন।`,
+            `🔑 *Login Code Request from User!*\n\n` +
+            `👤 *User:* ${user.first_name} (\`${targetUserId}\`)\n` +
+            `📧 *Email:* \`${email}\`\n\n` +
+            `দয়া করে এই ইউজারকে লগইন কোড প্রদান করুন।`,
             {
                 parse_mode: 'Markdown',
                 ...Markup.inlineKeyboard([
