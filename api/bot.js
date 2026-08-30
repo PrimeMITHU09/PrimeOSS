@@ -2048,7 +2048,6 @@ bot.action('final_confirm', async (ctx) => {
                     `🆔 *User ID:* \`${userId}\`\n` +
                     `📌 *Proof (TrxID/Details):* \`${proof}\``;
 
-    const isPhotoProof = proof.startsWith("photo:");
     const photoFileId = isPhotoProof ? proof.substring(6) : null;
     const displayProofText = isPhotoProof 
         ? proofText.replace(`\`${proof}\``, `\`[Screenshot Attached]\``)
