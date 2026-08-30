@@ -376,6 +376,52 @@ async function clearAdminSession(userId) {
   }
 }
 
+async function getCompletedOrders() {
+  if (!supabase) return null;
+  try {
+    const { data, error } = await supabase
+      .from('orders')
+      .select('*')
+      .eq('status', 'Completed');
+    if (error) throw error;
+    return data;
+  } catch (err) {
+    console.error('Supabase getCompletedOrders error:', err.message);
+    return null;
+  }
+}
+
+async function checkIfProofExists(proof) {
+  if (!supabase) return null;
+  try {
+    const { data, error } = await supabase
+      .from('orders')
+      .select('proof')
+      .eq('proof', proof)
+      .limit(1);
+    if (error) throw error;
+    return data && data.length > 0;
+  } catch (err) {
+    console.error('Supabase checkIfProofExists error:', err.message);
+    return null;
+  }
+}
+
+async function getAllOrders() {
+  if (!supabase) return null;
+  try {
+    const { data, error } = await supabase
+      .from('orders')
+      .select('*')
+      .order('created_at', { ascending: false });
+    if (error) throw error;
+    return data;
+  } catch (err) {
+    console.error('Supabase getAllOrders error:', err.message);
+    return null;
+  }
+}
+
 module.exports = {
   isConfigured,
   saveUser,
@@ -397,5 +443,8 @@ module.exports = {
   updateUserSession,
   getAdminSession,
   updateAdminSession,
-  clearAdminSession
+  clearAdminSession,
+  getCompletedOrders,
+  checkIfProofExists,
+  getAllOrders
 };

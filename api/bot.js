@@ -10,6 +10,27 @@ const bot = new Telegraf(BOT_TOKEN);
 
 // In-memory fallback for maintenance mode (just in case)
 let memoryMaintenanceMode = false;
+let memoryFakeSalesEnabled = false; // in-memory fallback for fake sales loop
+
+async function getFakeSalesStatus() {
+    if (db.isConfigured()) {
+        const coupon = await db.getCoupon('SYSTEM_FAKE_SALES_ENABLED');
+        if (coupon) {
+            return coupon.discount_amount === 1;
+        }
+        return false;
+    }
+    return memoryFakeSalesEnabled;
+}
+
+async function setFakeSalesStatus(enabled) {
+    const val = enabled ? 1 : 0;
+    if (db.isConfigured()) {
+        await db.createCoupon('SYSTEM_FAKE_SALES_ENABLED', val);
+    } else {
+        memoryFakeSalesEnabled = enabled;
+    }
+}
 
 async function getMaintenanceMode() {
     if (db.isConfigured()) {
@@ -95,14 +116,207 @@ async function checkAndSendNotice(ctx) {
     }
 }
 
+// Dynamic wallet values (Bkash/Nagad/Binance/Payoneer)
+let memoryWallets = {
+    bkash: '01864339154',
+    nagad: '01864339154',
+    binance: '955102483',
+    payoneer: 'mithuchandra647@gmail.com'
+};
+
+async function getWallet(type) {
+    if (db.isConfigured()) {
+        const coupons = await db.getAllCoupons();
+        if (coupons) {
+            const walletPrefix = `WALLET_${type.toUpperCase()}|`;
+            const coupon = coupons.find(cp => cp.code.startsWith(walletPrefix));
+            if (coupon) {
+                return coupon.code.split(walletPrefix)[1];
+            }
+        }
+    }
+    return memoryWallets[type];
+}
+
+async function setWallet(type, value) {
+    if (db.isConfigured()) {
+        const coupons = await db.getAllCoupons();
+        if (coupons) {
+            const walletPrefix = `WALLET_${type.toUpperCase()}|`;
+            const oldWallets = coupons.filter(cp => cp.code.startsWith(walletPrefix));
+            for (const old of oldWallets) {
+                await db.deleteCoupon(old.code);
+            }
+        }
+        await db.createCoupon(`WALLET_${type.toUpperCase()}|` + value, 0);
+    } else {
+        memoryWallets[type] = value;
+    }
+}
+
+// Referral Systems Config & Helpers
+let memoryReferrals = {};
+let memoryRewardedReferrals = {}; // in-memory history of successful referrals
+
+async function checkIfUserIsNew(userId) {
+    if (db.isConfigured()) {
+        const users = await db.getAllUsers();
+        if (users) {
+            return !users.some(u => String(u.user_id) === userId);
+        }
+    }
+    return !memoryAllStartedUsers.has(userId);
+}
+
+async function saveReferral(newUserId, referrerId) {
+    if (db.isConfigured()) {
+        await db.createCoupon(`REFERRAL|${newUserId}|${referrerId}`, 0);
+    } else {
+        memoryReferrals[newUserId] = referrerId;
+    }
+}
+
+async function checkAndRewardReferral(newUserId, ctx) {
+    try {
+        let referrerId = null;
+        if (db.isConfigured()) {
+            const coupons = await db.getAllCoupons();
+            if (coupons) {
+                const refCoupon = coupons.find(cp => cp.code.startsWith(`REFERRAL|${newUserId}|`));
+                if (refCoupon) {
+                    referrerId = refCoupon.code.split('|')[2];
+                    await db.deleteCoupon(refCoupon.code);
+                }
+            }
+        } else {
+            referrerId = memoryReferrals[newUserId];
+            delete memoryReferrals[newUserId];
+        }
+
+        if (referrerId) {
+            const randomSuffix = Math.random().toString(36).substring(2, 7).toUpperCase();
+            const rewardCouponCode = `REF_${randomSuffix}`;
+            const rewardAmount = 3; // 3 TK Discount
+
+            if (db.isConfigured()) {
+                await db.createCoupon(rewardCouponCode, rewardAmount);
+                await db.createCoupon(`REWARDED_REF|${referrerId}|${newUserId}|${Date.now()}`, 0);
+            } else {
+                memoryCoupons[rewardCouponCode] = rewardAmount;
+                if (!memoryRewardedReferrals[referrerId]) {
+                    memoryRewardedReferrals[referrerId] = [];
+                }
+                memoryRewardedReferrals[referrerId].push(newUserId);
+            }
+
+            try {
+                await ctx.telegram.sendMessage(
+                    referrerId,
+                    `🎉 *Referral Reward!* 💎\n` +
+                    `━━━━━━━━━━━━━━━━━━\n` +
+                    `আপনার রেফারেল লিংক ব্যবহার করে একজন কাস্টমার প্রথম কেনাকাটা সম্পন্ন করেছেন!\n\n` +
+                    `উপহার হিসেবে আপনি একটি কুপন পেয়েছেন:\n` +
+                    `🎟️ Coupon: \`${rewardCouponCode}\` (-${rewardAmount} TK)\n\n` +
+                    `🛒 আপনার পরবর্তী কেনাকাটায় এটি ব্যবহার করতে পারবেন!`,
+                    { parse_mode: 'Markdown' }
+                );
+            } catch (err) {
+                console.error(`Failed to send referral reward message to ${referrerId}:`, err.message);
+            }
+        }
+    } catch (e) {
+        console.error("Error rewarding referral:", e.message);
+    }
+}
+
+async function getReferralLeaderboard() {
+    let list = [];
+    if (db.isConfigured()) {
+        const coupons = await db.getAllCoupons();
+        if (coupons) {
+            const counts = {};
+            coupons.forEach(cp => {
+                if (cp.code.startsWith('REWARDED_REF|')) {
+                    const parts = cp.code.split('|');
+                    const referrerId = parts[1];
+                    counts[referrerId] = (counts[referrerId] || 0) + 1;
+                }
+            });
+            list = Object.keys(counts).map(referrerId => ({
+                referrerId,
+                count: counts[referrerId]
+            }));
+        }
+    } else {
+        list = Object.keys(memoryRewardedReferrals).map(referrerId => ({
+            referrerId,
+            count: memoryRewardedReferrals[referrerId].length
+        }));
+    }
+
+    list.sort((a, b) => b.count - a.count);
+    return list.slice(0, 10);
+}
+
+async function getLeaderboardText() {
+    const leaderboard = await getReferralLeaderboard();
+    let text = `🏆 *Referral Leaderboard / রেফারে চ্যাম্পিয়ন* 🏆\n` +
+               `━━━━━━━━━━━━━━━━━━\n` +
+               `সবচেয়ে বেশি সফল রেফার করা টপ রেফারারদের তালিকা:\n\n`;
+
+    if (leaderboard.length === 0) {
+        text += `> ❌ বর্তমানে কোনো সফল রেফারেলের তথ্য নেই। রেফারেল শুরু করতে আপনার লিংক শেয়ার করুন!`;
+        return text;
+    }
+
+    let users = [];
+    if (db.isConfigured()) {
+        users = await db.getAllUsers();
+    }
+
+    leaderboard.forEach((item, index) => {
+        const user = users ? users.find(u => String(u.user_id) === item.referrerId) : null;
+        const displayName = user ? (user.first_name || 'User') : `User ID: ${item.referrerId}`;
+        const username = user && user.username ? ` (@${user.username})` : '';
+
+        let medal = "👤";
+        if (index === 0) medal = "🥇";
+        else if (index === 1) medal = "🥈";
+        else if (index === 2) medal = "🥉";
+
+        text += `${medal} *#${index + 1}* - ${displayName}${username}\n` +
+                `   └─ Successful Refers: *${item.count}* \n\n`;
+    });
+
+    text += `━━━━━━━━━━━━━━━━━━\n` +
+            `🎁 প্রতি সফল রেফারে ৩ টাকা সরাসরি ডিসকাউন্ট কুপন পান!`;
+    return text;
+}
+
+async function checkUserJoinedGroup(ctx, userId) {
+    if (userId.toString() === ADMIN_ID) return true;
+    try {
+        const member = await ctx.telegram.getChatMember(parseInt(GROUP_ID), parseInt(userId));
+        const status = member.status;
+        return (status === 'creator' || status === 'administrator' || status === 'member' || status === 'restricted');
+    } catch (err) {
+        console.error("Failed to check group membership:", err.message);
+        return true;
+    }
+}
+
 function isOutsideSellingHours() {
-    const now = new Date();
-    // Add 6 hours to get Bangladesh Local Time (GMT+6)
-    const bdTime = new Date(now.getTime() + (6 * 60 * 60 * 1000));
-    const hours = bdTime.getUTCHours();
-    
-    // Selling hours are 11:00 AM (11) to 11:00 PM (23) BD local time.
-    return (hours < 11 || hours >= 23);
+    try {
+        const bdTimeString = new Date().toLocaleString("en-US", { timeZone: "Asia/Dhaka", hour: "2-digit", hour12: false });
+        const hours = parseInt(bdTimeString, 10);
+        return (hours < 11 || hours >= 23);
+    } catch (e) {
+        // Fallback to manual GMT+6 calculation if timezone lookup fails
+        const now = new Date();
+        const bdTime = new Date(now.getTime() + (6 * 60 * 60 * 1000));
+        const hours = bdTime.getUTCHours();
+        return (hours < 11 || hours >= 23);
+    }
 }
 
 async function getLatestCompletedEmail(userId) {
@@ -114,6 +328,73 @@ async function getLatestCompletedEmail(userId) {
         }
     }
     return 'N/A';
+}
+
+const fakeNames = ["Hasan", "Robin", "Fahim", "Mim", "Rashed", "Nipa", "Arif", "Sumon", "Sazzad", "Anik", "Mithu", "Liton", "Sujon", "Tarek", "Raju", "Hassan", "Apu", "Joy", "Rony", "Faisal"];
+const fakeReviews = [
+    "অসাধারণ সার্ভিস! খুব দ্রুত ডেলিভারি পেলাম।",
+    "অ্যাকাউন্ট পারফেক্টলি কাজ করছে। ধন্যবাদ!",
+    "খুব কম সময়ে ডেলিভারি দেওয়ার জন্য ধন্যবাদ।",
+    "সেরা সার্ভিস! রেটিং ৫/৫।",
+    "খুবই ভালো এবং বিশ্বস্ত সেলার।",
+    "ডেলিভারি স্পিড অসাধারণ ছিল!",
+    "প্যাকেজ একটিভ হতে মাত্র ২ মিনিট লেগেছে!",
+    "রেকমেন্ডেড সেলার, ধন্যবাদ ভাই!",
+    "১০০% রিয়েল এবং সিকিউর। কাজ করছে সুন্দর।"
+];
+
+async function sendFakeSaleToGroup() {
+    try {
+        let enabled = false;
+        if (db.isConfigured()) {
+            const coupon = await db.getCoupon('SYSTEM_FAKE_SALES_ENABLED');
+            enabled = coupon ? coupon.discount_amount === 1 : false;
+        } else {
+            enabled = true; // memory fallback default
+        }
+
+        if (!enabled) return;
+
+        const name = fakeNames[Math.floor(Math.random() * fakeNames.length)];
+        const review = fakeReviews[Math.floor(Math.random() * fakeReviews.length)];
+
+        const packages = [
+            { name: "1 Account AdsPower", price: 30 },
+            { name: "3 Accounts AdsPower", price: 80 },
+            { name: "5 Accounts AdsPower", price: 135 },
+            { name: "10 Accounts AdsPower", price: 250 }
+        ];
+        const selectedPkg = packages[Math.floor(Math.random() * packages.length)];
+        const methods = ["bKash Personal", "Nagad Personal", "Binance Pay ID"];
+        const method = methods[Math.floor(Math.random() * methods.length)];
+
+        // Construct masked email with fixed @emalupe.com domain
+        const firstLetter = name.substring(0, 2).toLowerCase();
+        const maskedEmail = `${firstLetter}***@emalupe.com`;
+
+        // 4 or 5 stars
+        const rating = Math.random() > 0.3 ? 5 : 4;
+
+        const fakeSalesMsg = `🛒 *AdsPower Order Completed!* 🛒\n` +
+                             `▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬\n` +
+                             `📦 *Package:* \`${selectedPkg.name}\`\n` +
+                             `💳 *Payment:* \`${method}\`\n` +
+                             `💰 *Amount:* \`${selectedPkg.price} TK\`\n` +
+                             `▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬\n` +
+                             `👤 *Customer:* \`${name}\`\n` +
+                             `📧 *Email:* \`${maskedEmail}\`\n` +
+                             `🔑 *Password:* \`••••••••\`\n` +
+                             `⏳ *Status:* ✅ \`Successfully Delivered\`\n` +
+                             `▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬\n` +
+                             `⭐️ *Customer Rating:* ${'⭐'.repeat(rating)} (${rating}/5)\n` +
+                             `💬 *Feedback:* "${review}"\n` +
+                             `▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬\n` +
+                             `💎 *AdsPower Seller BD* 🚀`;
+
+        await bot.telegram.sendMessage(parseInt(GROUP_ID), fakeSalesMsg, { parse_mode: 'Markdown' });
+    } catch (err) {
+        console.error("Error sending fake sale:", err.message);
+    }
 }
 
 // Maintenance Mode & Scheduling Middleware
@@ -423,7 +704,7 @@ function getMainMenu(userName) {
                 [Markup.button.callback('🛒 Buy Now', 'buy_options')],
                 [Markup.button.callback('👤 My Profile', 'profile'), Markup.button.callback('🛍 My Order', 'my_order')],
                 [Markup.button.callback('🧾 Transaction', 'transaction'), Markup.button.callback('❓ FAQ & Help Guide', 'faq_menu')],
-                [Markup.button.callback('📞 Contact Support', 'support')]
+                [Markup.button.callback('🏆 Leaderboard', 'leaderboard'), Markup.button.callback('📞 Contact Support', 'support')]
             ])
         }
     };
@@ -436,9 +717,89 @@ const adminReplyKeyboard = Markup.keyboard([
     ['👑 Close Admin Panel 👑']
 ]).resize();
 
+// Force Join Verification Middleware
+bot.use(async (ctx, next) => {
+    const userId = ctx.from ? ctx.from.id.toString() : null;
+    if (!userId || userId === ADMIN_ID) return next();
+
+    // Skip checks for verifying join
+    if (ctx.callbackQuery && ctx.callbackQuery.data === 'verify_join') {
+        return next();
+    }
+
+    const joined = await checkUserJoinedGroup(ctx, userId);
+    if (!joined) {
+        // Run referral command capture in middleware in case they started via ref link
+        if (ctx.message && ctx.message.text && ctx.message.text.startsWith('/start ref_')) {
+            const text = ctx.message.text;
+            const refMatch = text.match(/^\/start ref_(\d+)$/);
+            if (refMatch) {
+                const referrerId = refMatch[1];
+                const newUserId = ctx.from.id.toString();
+                const isNew = await checkIfUserIsNew(newUserId);
+                if (isNew && referrerId !== newUserId) {
+                    await saveReferral(newUserId, referrerId);
+                    try {
+                        await ctx.telegram.sendMessage(referrerId, `👥 একজন কাস্টমার আপনার রেফারেল লিংকের মাধ্যমে বটে প্রবেশ করেছেন! তিনি প্রথম অর্ডার সম্পন্ন করলেই আপনি ৩ টাকা ডিসকাউন্ট কুপন পাবেন।`);
+                    } catch (err) {}
+                }
+            }
+        }
+
+        let inviteLink = "https://t.me/AdsPowerSellerBDGroup";
+        try {
+            const chat = await ctx.telegram.getChat(parseInt(GROUP_ID));
+            if (chat.invite_link) {
+                inviteLink = chat.invite_link;
+            } else if (chat.username) {
+                inviteLink = `https://t.me/${chat.username}`;
+            }
+        } catch (err) {}
+
+        const msg = `📢 *অফিসিয়াল গ্রুপে জয়েন করুন!* 📢\n` +
+                    `━━━━━━━━━━━━━━━━━━\n` +
+                    `বটের সকল সার্ভিস সচল করতে প্রথমে আমাদের অফিসিয়াল গ্রুপে জয়েন করুন।\n\n` +
+                    `👇 নিচে জয়েন করে ভেরিফাই বাটনে ক্লিক করুন:`;
+
+        const keyboard = Markup.inlineKeyboard([
+            [Markup.button.url('👥 Join Group', inviteLink)],
+            [Markup.button.callback('🟢 Verify / Check Join', 'verify_join')]
+        ]);
+
+        if (ctx.callbackQuery) {
+            await ctx.answerCbQuery("গ্রুপে জয়েন করা বাধ্যতামূলক!", { show_alert: true });
+            try {
+                return await ctx.editMessageText(msg, { parse_mode: 'Markdown', ...keyboard });
+            } catch (e) {
+                return await ctx.reply(msg, { parse_mode: 'Markdown', ...keyboard });
+            }
+        } else {
+            return await ctx.reply(msg, { parse_mode: 'Markdown', ...keyboard });
+        }
+    }
+
+    return next();
+});
+
 // /start কমান্ড
 bot.start(async (ctx) => {
+    const text = ctx.message ? ctx.message.text : '';
+    const refMatch = text.match(/^\/start ref_(\d+)$/);
+    if (refMatch) {
+        const referrerId = refMatch[1];
+        const newUserId = ctx.from.id.toString();
+        const isNew = await checkIfUserIsNew(newUserId);
+        if (isNew && referrerId !== newUserId) {
+            await saveReferral(newUserId, referrerId);
+            try {
+                await ctx.telegram.sendMessage(referrerId, `👥 একজন কাস্টমার আপনার রেফারেল লিংকের মাধ্যমে বটে প্রবেশ করেছেন! তিনি প্রথম অর্ডার সম্পন্ন করলেই আপনি ৩ টাকা ডিসকাউন্ট কুপন পাবেন।`);
+            } catch (err) {}
+        }
+    }
+
+    const userId = ctx.from.id.toString();
     await saveUser(ctx);
+    await updateUserSession(userId, { waitingFor: null, tempRating: null });
     await checkAndSendNotice(ctx);
     const userName = ctx.from.first_name || "User";
     const menu = getMainMenu(userName);
@@ -611,11 +972,18 @@ bot.action('apply_coupon_prompt', async (ctx) => {
 bot.action('profile', async (ctx) => {
     await ctx.answerCbQuery();
     const user = ctx.from;
+    const botUsername = ctx.botInfo ? ctx.botInfo.username : 'AdsPowerSellerBDBot';
+    const refLink = `https://t.me/${botUsername}?start=ref_${user.id}`;
+    
     const profileText = `👤 *My Profile Info / আমার প্রোফাইল* 👤\n` +
                         `━━━━━━━━━━━━━━━━━━\n` +
                         `• *Name:* \`${user.first_name}\`\n` +
                         `• *Username:* @${user.username || 'N/A'}\n` +
                         `• *User ID:* \`${user.id}\` (ক্লিক করে কপি করুন)\n` +
+                        `━━━━━━━━━━━━━━━━━━\n` +
+                        `👥 *Refer & Earn (রেফারেল লিংক):*\n` +
+                        `• \`${refLink}\` (ক্লিক করে কপি করুন)\n` +
+                        `> এই লিংকটি বন্ধুদের সাথে শেয়ার করুন। আপনার লিংকের মাধ্যমে কেউ এসে প্রথম কেনাকাটা সম্পূর্ণ করলে আপনি পাবেন *৩ টাকা* ডিসকাউন্ট কুপন! 🎁\n` +
                         `━━━━━━━━━━━━━━━━━━\n` +
                         `💎 *AdsPower Seller BD* এর সাথে থাকার জন্য ধন্যবাদ!`;
     return ctx.reply(profileText, {
@@ -689,21 +1057,25 @@ bot.action('my_order', async (ctx) => {
         text += `\n`;
     });
 
+    const hasPendingOrder = history.some(ord => ord.status === 'Pending Verification');
+    const inlineButtons = [];
+    if (hasPendingOrder) {
+        inlineButtons.push([Markup.button.callback('❌ Cancel Pending Order', 'cancel_my_pending_order')]);
+    }
+    inlineButtons.push([
+        Markup.button.callback('🗑 Clear History', 'clear_my_order'),
+        Markup.button.callback('⬅️ Back to Menu', 'main_menu')
+    ]);
+
     try {
         await ctx.editMessageText(text, {
             parse_mode: 'Markdown',
-            ...Markup.inlineKeyboard([
-                [Markup.button.callback('🗑 Clear History', 'clear_my_order')],
-                [Markup.button.callback('⬅️ Back to Menu', 'main_menu')]
-            ])
+            ...Markup.inlineKeyboard(inlineButtons)
         });
     } catch(e) {
         return ctx.reply(text, {
             parse_mode: 'Markdown',
-            ...Markup.inlineKeyboard([
-                [Markup.button.callback('🗑 Clear History', 'clear_my_order')],
-                [Markup.button.callback('⬅️ Back to Menu', 'main_menu')]
-            ])
+            ...Markup.inlineKeyboard(inlineButtons)
         });
     }
 });
@@ -721,6 +1093,53 @@ bot.action('clear_my_order', async (ctx) => {
     });
 });
 
+bot.action('cancel_my_pending_order', async (ctx) => {
+    const userId = ctx.from.id.toString();
+    
+    let result = false;
+    if (db.isConfigured()) {
+        result = await db.cancelOrder(userId);
+    } else {
+        if (memoryPendingOrders[userId] && memoryPendingOrders[userId].status === 'Pending Verification') {
+            memoryPendingOrders[userId].status = 'Cancelled';
+            result = true;
+        }
+    }
+    
+    if (result) {
+        if (memoryUserOrderHistory[userId]) {
+            const pendingOrdIdx = memoryUserOrderHistory[userId].findIndex(o => o.status === 'Pending Verification');
+            if (pendingOrdIdx !== -1) {
+                memoryUserOrderHistory[userId][pendingOrdIdx].status = 'Cancelled';
+            }
+        }
+        
+        await ctx.answerCbQuery("Pending order cancelled!");
+        
+        try {
+            await ctx.telegram.sendMessage(
+                ADMIN_ID,
+                `❌ *Order Cancelled by User!*\n\n` +
+                `• Name: ${ctx.from.first_name || 'User'}\n` +
+                `• Username: @${ctx.from.username || 'N/A'}\n` +
+                `• User ID: \`${userId}\`\n` +
+                `• Status: Cancelled`,
+                { parse_mode: 'Markdown' }
+            );
+        } catch (e) {}
+
+        return ctx.reply(
+            `❌ *অর্ডার বাতিল করা হয়েছে!* ❌\n` +
+            `━━━━━━━━━━━━━━━━━━\n\n` +
+            `> আপনার পেন্ডিং অর্ডারটি সফলভাবে বাতিল করা হয়েছে। আপনি চাইলে এখন আবার নতুন করে অর্ডার করতে পারবেন।`, {
+            parse_mode: 'Markdown',
+            ...Markup.inlineKeyboard([[Markup.button.callback('⬅️ Back to Menu', 'main_menu')]])
+        });
+    } else {
+        return ctx.answerCbQuery("কোনো পেন্ডিং অর্ডার পাওয়া যায়নি!", { show_alert: true });
+    }
+});
+
 bot.action('transaction', async (ctx) => {
     await ctx.answerCbQuery();
     const txText = `🧾 *Transaction Status / লেনদেন* 🧾\n` +
@@ -733,17 +1152,60 @@ bot.action('transaction', async (ctx) => {
     });
 });
 
+bot.action('leaderboard', async (ctx) => {
+    await ctx.answerCbQuery();
+    const text = await getLeaderboardText();
+    return ctx.reply(text, {
+        parse_mode: 'Markdown',
+        ...Markup.inlineKeyboard([[Markup.button.callback('⬅️ Back to Menu', 'main_menu')]])
+    });
+});
+
+bot.action('verify_join', async (ctx) => {
+    const userId = ctx.from.id.toString();
+    const joined = await checkUserJoinedGroup(ctx, userId);
+    if (joined) {
+        await ctx.answerCbQuery("সফলভাবে ভেরিফাই হয়েছে! ❤️", { show_alert: true });
+        try { await ctx.deleteMessage(); } catch(e) {}
+        const userName = ctx.from.first_name || "User";
+        const menu = getMainMenu(userName);
+        return ctx.reply(menu.text, menu.extra);
+    } else {
+        return ctx.answerCbQuery("❌ আপনি এখনো গ্রুপে জয়েন করেননি! অনুগ্রহ করে জয়েন করে আবার ট্রাই করুন।", { show_alert: true });
+    }
+});
+
 bot.action('support', async (ctx) => {
     await ctx.answerCbQuery();
     const supportText = `📞 *Contact Support / সাহায্য কেন্দ্র* 📞\n` +
                         `━━━━━━━━━━━━━━━━━━\n` +
                         `> 👨‍💻 *Admin Username:* @prime8088\n` +
                         `> 📲 *WhatsApp:* \`01864339154\`\n\n` +
-                        `💬 যেকোনো ধরনের সমস্যা বা সাহায্যের জন্য সরাসরি এডমিনের সাথে যোগাযোগ করুন। আমরা আপনাকে দ্রুত সমাধান দিতে সদা প্রস্তুত!`;
+                        `💬 যেকোনো ধরনের সমস্যা বা সাহায্যের জন্য সরাসরি এডমিনের সাথে যোগাযোগ করুন। অথবা সরাসরি নিচের বাটনটি ব্যবহার করে বটে মেসেজ পাঠান।`;
     return ctx.reply(supportText, {
         parse_mode: 'Markdown',
-        ...Markup.inlineKeyboard([[Markup.button.callback('⬅️ Back to Menu', 'main_menu')]])
+        ...Markup.inlineKeyboard([
+            [Markup.button.callback('✉️ Send Message to Admin', 'open_support_ticket')],
+            [Markup.button.callback('⬅️ Back to Menu', 'main_menu')]
+        ])
     });
+});
+
+bot.action('open_support_ticket', async (ctx) => {
+    await ctx.answerCbQuery();
+    const userId = ctx.from.id.toString();
+    await updateUserSession(userId, { waitingFor: 'support_message' });
+    return ctx.reply("✍️ অনুগ্রহ করে আপনার প্রশ্ন বা বার্তাটি এখানে লিখে পাঠান (অ্যাডমিন এটি দেখে সরাসরি বটের মাধ্যমে উত্তর দেবেন):");
+});
+
+bot.action(/^reply_support_(.+)$/, async (ctx) => {
+    if (!isAdmin(ctx)) return ctx.answerCbQuery("Unauthorized!", { show_alert: true });
+    await ctx.answerCbQuery();
+    const targetUserId = ctx.match[1];
+    const adminId = ctx.from.id.toString();
+    
+    await updateAdminSession(adminId, { step: `waiting_for_support_reply`, targetUserId: targetUserId });
+    return ctx.reply(`✍️ ইউজারকে (ID: \`${targetUserId}\`) উত্তর দেওয়ার জন্য আপনার মেসেজটি লিখে পাঠান:`, { parse_mode: 'Markdown' });
 });
 
 // FAQ Section Actions
@@ -849,11 +1311,12 @@ bot.action('pay_bkash', async (ctx) => {
     const session = await getUserSession(userId);
     await updateUserSession(userId, { method: 'bKash' });
     const finalPrice = Math.max(0, session.price - session.discount);
+    const bkashNum = await getWallet('bkash');
     
     return ctx.reply(
         `💎 *bKash Payment Details* 💎\n` +
         `━━━━━━━━━━━━━━━━━━\n` +
-        `📞 *Send Money Number:* \`01864339154\` (Personal)\n` +
+        `📞 *Send Money Number:* \`${bkashNum}\` (Personal)\n` +
         `📦 *Selected Package:* \`${session.packageName}\`\n` +
         (session.appliedCoupon ? `🎟️ *Applied Coupon:* \`${session.appliedCoupon}\` (-${session.discount} TK)\n` : '') +
         `💰 *Total Payable:* *${finalPrice} TK*\n` +
@@ -875,11 +1338,12 @@ bot.action('pay_nagad', async (ctx) => {
     const session = await getUserSession(userId);
     await updateUserSession(userId, { method: 'Nagad' });
     const finalPrice = Math.max(0, session.price - session.discount);
+    const nagadNum = await getWallet('nagad');
     
     return ctx.reply(
         `💎 *Nagad Payment Details* 💎\n` +
         `━━━━━━━━━━━━━━━━━━\n` +
-        `📞 *Send Money Number:* \`01864339154\` (Personal)\n` +
+        `📞 *Send Money Number:* \`${nagadNum}\` (Personal)\n` +
         `📦 *Selected Package:* \`${session.packageName}\`\n` +
         (session.appliedCoupon ? `🎟️ *Applied Coupon:* \`${session.appliedCoupon}\` (-${session.discount} TK)\n` : '') +
         `💰 *Total Payable:* *${finalPrice} TK*\n` +
@@ -901,11 +1365,12 @@ bot.action('pay_binance', async (ctx) => {
     const session = await getUserSession(userId);
     await updateUserSession(userId, { method: 'Binance' });
     const finalPrice = Math.max(0, session.price - session.discount);
+    const binanceId = await getWallet('binance');
     
     return ctx.reply(
         `💎 *Binance Payment Details* 💎\n` +
         `━━━━━━━━━━━━━━━━━━\n` +
-        `📌 *Pay ID:* \`955102483\`\n` +
+        `📌 *Pay ID:* \`${binanceId}\`\n` +
         `📦 *Selected Package:* \`${session.packageName}\`\n` +
         (session.appliedCoupon ? `🎟️ *Applied Coupon:* \`${session.appliedCoupon}\` (-${session.discount} TK)\n` : '') +
         `💰 *Total Payable:* *${finalPrice} TK* (or USDT equivalent)\n` +
@@ -927,11 +1392,12 @@ bot.action('pay_payoneer', async (ctx) => {
     const session = await getUserSession(userId);
     await updateUserSession(userId, { method: 'Payoneer' });
     const finalPrice = Math.max(0, session.price - session.discount);
+    const payoneerEmail = await getWallet('payoneer');
     
     return ctx.reply(
         `💎 *Payoneer Payment Details* 💎\n` +
         `━━━━━━━━━━━━━━━━━━\n` +
-        `📧 *Email:* \`mithuchandra647@gmail.com\`\n` +
+        `📧 *Email:* \`${payoneerEmail}\`\n` +
         `📦 *Selected Package:* \`${session.packageName}\`\n` +
         (session.appliedCoupon ? `🎟️ *Applied Coupon:* \`${session.appliedCoupon}\` (-${session.discount} TK)\n` : '') +
         `💰 *Total Payable:* *${finalPrice} TK* (or USD equivalent)\n` +
@@ -972,15 +1438,28 @@ async function showBotControlPanel(ctx) {
     const isMaintenance = await getMaintenanceMode();
     const isNoticeEnabled = await getNoticeStatus();
     const noticeText = await getNoticeText();
+    const isFakeSalesEnabled = await getFakeSalesStatus();
 
     const botStatusText = isMaintenance ? '🔴 **OFF (Maintenance Mode is ON)**' : '🟢 **ON (Normal Mode is ON)**';
     const noticeStatusText = isNoticeEnabled ? '🟢 **ENABLED (Active)**' : '🔴 **DISABLED (Inactive)**';
+    const fakeSalesStatusText = isFakeSalesEnabled ? '🟢 **ENABLED (Sending Fake Sales)**' : '🔴 **DISABLED (Stopped)**';
+
+    const bkashNum = await getWallet('bkash');
+    const nagadNum = await getWallet('nagad');
+    const binanceId = await getWallet('binance');
+    const payoneerEmail = await getWallet('payoneer');
 
     const panelMsg = `⚙️ *AdsPower Bot Golden Control Panel*\n\n` +
                      `• **Bot Status:** ${botStatusText}\n` +
-                     `• **Highlight Notice:** ${noticeStatusText}\n\n` +
+                     `• **Highlight Notice:** ${noticeStatusText}\n` +
+                     `• **Fake Sales Loop:** ${fakeSalesStatusText}\n\n` +
                      `📢 **Notice Text:**\n` +
                      `> ${noticeText}\n\n` +
+                     `💳 **Wallet Numbers / IDs:**\n` +
+                     `• bKash: \`${bkashNum}\`\n` +
+                     `• Nagad: \`${nagadNum}\`\n` +
+                     `• Binance Pay ID: \`${binanceId}\`\n` +
+                     `• Payoneer Email: \`${payoneerEmail}\`\n\n` +
                      `নিচের বাটনগুলো ক্লিক করে কন্ট্রোল করুন:`;
 
     const inlineKeyboard = Markup.inlineKeyboard([
@@ -990,6 +1469,10 @@ async function showBotControlPanel(ctx) {
         [
             Markup.button.callback(isNoticeEnabled ? '🔕 Disable Notice' : '🔔 Enable Notice', 'notice_toggle'),
             Markup.button.callback('✍️ Edit Notice Text', 'notice_edit_prompt')
+        ],
+        [
+            Markup.button.callback(isFakeSalesEnabled ? '🔕 Disable Fake Sales' : '🔔 Enable Fake Sales', 'fake_sales_toggle'),
+            Markup.button.callback('💳 Update Wallets', 'wallets_menu')
         ]
     ]);
 
@@ -1001,6 +1484,41 @@ async function showBotControlPanel(ctx) {
         await ctx.reply(panelMsg, { parse_mode: 'Markdown', ...inlineKeyboard });
     }
 }
+
+bot.action('wallets_menu', async (ctx) => {
+    if (!isAdmin(ctx)) return ctx.answerCbQuery("Unauthorized!", { show_alert: true });
+    await ctx.answerCbQuery();
+    
+    const walletsText = `💳 *Wallet Numbers Update Panel* 💳\n\n` +
+                        `নিচের বাটনগুলো থেকে পেমেন্ট মেথড সিলেক্ট করে নতুন নাম্বার/আইডি দিন:`;
+                        
+    return ctx.editMessageText(walletsText, {
+        parse_mode: 'Markdown',
+        ...Markup.inlineKeyboard([
+            [Markup.button.callback('🇧🇩 Edit bKash', 'edit_wallet_bkash'), Markup.button.callback('🇧🇩 Edit Nagad', 'edit_wallet_nagad')],
+            [Markup.button.callback('🌐 Edit Binance', 'edit_wallet_binance'), Markup.button.callback('🌐 Edit Payoneer', 'edit_wallet_payoneer')],
+            [Markup.button.callback('⬅️ Back to Control Panel', 'bot_control_back')]
+        ])
+    });
+});
+
+bot.action('bot_control_back', async (ctx) => {
+    if (!isAdmin(ctx)) return ctx.answerCbQuery("Unauthorized!", { show_alert: true });
+    await ctx.answerCbQuery();
+    return showBotControlPanel(ctx);
+});
+
+bot.action(/^edit_wallet_(bkash|nagad|binance|payoneer)$/, async (ctx) => {
+    if (!isAdmin(ctx)) return ctx.answerCbQuery("Unauthorized!", { show_alert: true });
+    await ctx.answerCbQuery();
+    
+    const type = ctx.match[1];
+    const adminId = ctx.from.id.toString();
+    
+    await updateAdminSession(adminId, { step: `waiting_for_wallet_${type}` });
+    
+    return ctx.reply(`✍️ অনুগ্রহ করে নতুন *${type.toUpperCase()}* নাম্বার বা আইডিটি লিখে পাঠান:`, { parse_mode: 'Markdown' });
+});
 
 bot.action('maintenance_toggle', async (ctx) => {
     if (!isAdmin(ctx)) return ctx.answerCbQuery("Unauthorized!", { show_alert: true });
@@ -1024,6 +1542,14 @@ bot.action('notice_edit_prompt', async (ctx) => {
     const adminId = ctx.from.id.toString();
     await updateAdminSession(adminId, { step: 'waiting_for_notice_text' });
     return ctx.reply("📢 অনুগ্রহ করে নতুন নোটিশ/ঘোষণা মেসেজটি লিখে পাঠান (Markdown ফরম্যাট সাপোর্ট করবে):");
+});
+
+bot.action('fake_sales_toggle', async (ctx) => {
+    if (!isAdmin(ctx)) return ctx.answerCbQuery("Unauthorized!", { show_alert: true });
+    const current = await getFakeSalesStatus();
+    await setFakeSalesStatus(!current);
+    await ctx.answerCbQuery(`Fake sales posting changed to ${!current ? 'ENABLED' : 'DISABLED'}!`);
+    return showBotControlPanel(ctx);
 });
 
 // Text / Input Handler
@@ -1058,7 +1584,12 @@ bot.on(['text', 'photo'], async (ctx) => {
                     `• Today's Sales: *${stats.todayRevenue} TK*\n` +
                     `• This Month's Sales: *${stats.monthRevenue} TK*\n\n` +
                     `❤️ Keep hustling! Keep selling! 🚀`;
-                return ctx.reply(reportText, { parse_mode: 'Markdown' });
+                return ctx.reply(reportText, { 
+                    parse_mode: 'Markdown',
+                    ...Markup.inlineKeyboard([
+                        [Markup.button.callback('📥 Download CSV Report', 'download_sales_csv')]
+                    ])
+                });
             }
             if (text === '🎟️ Coupons 🎟️') {
                 return showCouponsMenu(ctx);
@@ -1110,6 +1641,14 @@ bot.on(['text', 'photo'], async (ctx) => {
                 return showBotControlPanel(ctx);
             }
 
+            if (state.startsWith('waiting_for_wallet_') && text) {
+                const type = state.replace('waiting_for_wallet_', '');
+                await clearAdminSession(userId);
+                await setWallet(type, text.trim());
+                await ctx.reply(`✅ *${type.toUpperCase()}* ওয়ালেট সফলভাবে আপডেট করা হয়েছে!`, { parse_mode: 'Markdown' });
+                return showBotControlPanel(ctx);
+            }
+
             if (state === 'waiting_for_coupon_code' && text) {
                 const couponCode = text.trim().toUpperCase();
                 await updateAdminSession(userId, {
@@ -1134,7 +1673,26 @@ bot.on(['text', 'photo'], async (ctx) => {
                     memoryCoupons[couponCode] = discount;
                 }
 
-                return ctx.reply(`✅ কুপন কোড সফলভাবে যুক্ত হয়েছে!\n• Code: *${couponCode}*\n• Discount: *${discount} TK*`, { parse_mode: 'Markdown' });
+                await ctx.reply(`✅ কুপন কোড সফলভাবে যুক্ত হয়েছে!\n• Code: *${couponCode}*\n• Discount: *${discount} TK*\n\n📢 কাস্টমারদের কাছে কুপনটির নোটিফিকেশন ব্রডকাস্ট করা হচ্ছে...`, { parse_mode: 'Markdown' });
+
+                // Auto Coupon Announcement Broadcast
+                const userList = await getUserIdsForBroadcast();
+                const announceMsg = `🎟️ *NEW DISCOUNT COUPON RELEASED!* 🎟️\n` +
+                                    `━━━━━━━━━━━━━━━━━━\n` +
+                                    `নতুন প্রোমো কোড ব্যবহার করে আকর্ষণীয় ডিসকাউন্ট পান!\n\n` +
+                                    `• Coupon Code: *${couponCode}*\n` +
+                                    `• Discount Amount: *${discount} TK*\n\n` +
+                                    `🛒 এখনই কেনাকাটা করতে /start এ যান! 🚀`;
+
+                let successCount = 0;
+                for (const uId of userList) {
+                    try {
+                        await ctx.telegram.sendMessage(uId, announceMsg, { parse_mode: 'Markdown' });
+                        successCount++;
+                    } catch (err) {}
+                }
+
+                return ctx.reply(`📢 *Coupon Broadcast Completed!* \n\n✅ সফলভাবে পাঠানো হয়েছে: *${successCount}* জনের কাছে।`, { parse_mode: 'Markdown' });
             }
 
             if (state === 'waiting_for_reject_reason' && text) {
@@ -1156,6 +1714,25 @@ bot.on(['text', 'photo'], async (ctx) => {
                     return ctx.reply(`✅ Successfully Rejected Order & Sent Reason to User!`);
                 } catch (err) {
                     return ctx.reply(`❌ ইউজারকে রিজেক্ট মেসেজ পাঠানো যায়নি।`);
+                }
+            }
+
+            if (state === 'waiting_for_support_reply' && text) {
+                await clearAdminSession(userId);
+
+                try {
+                    await ctx.telegram.sendMessage(
+                        targetUser,
+                        `💬 *Support Team Reply* 💬\n` +
+                        `━━━━━━━━━━━━━━━━━━\n` +
+                        `> ${text}\n` +
+                        `━━━━━━━━━━━━━━━━━━\n` +
+                        `যেকোনো প্রয়োজনে আবার মেসেজ পাঠাতে পারেন। ধন্যবাদ!`,
+                        { parse_mode: 'Markdown' }
+                    );
+                    return ctx.reply(`✅ উত্তরটি সফলভাবে ইউজারের কাছে পাঠানো হয়েছে!`);
+                } catch (err) {
+                    return ctx.reply(`❌ ইউজারকে উত্তর পাঠানো যায়নি (ইউজার হয়তো বটটি ব্লক করেছেন)।`);
                 }
             }
 
@@ -1189,6 +1766,9 @@ bot.on(['text', 'photo'], async (ctx) => {
                 if (db.isConfigured()) {
                     await db.updateOrderStatus(targetUser, 'Completed', customEmailValue, customPassValue);
                 }
+                
+                // Check if this user was referred and reward the referrer
+                await checkAndRewardReferral(targetUser, ctx);
                 if (memoryPendingOrders[targetUser]) {
                     memoryPendingOrders[targetUser].status = 'Completed';
                     delete memoryPendingOrders[targetUser];
@@ -1291,9 +1871,71 @@ bot.on(['text', 'photo'], async (ctx) => {
         return showPaymentSelectionScreen(ctx, userId);
     }
 
+    if (session.waitingFor === 'support_message' && text) {
+        await updateUserSession(userId, { waitingFor: null });
+
+        try {
+            await ctx.telegram.sendMessage(
+                ADMIN_ID,
+                `💬 *New Support Request!* 👤\n` +
+                `━━━━━━━━━━━━━━━━━━\n` +
+                `• *From:* ${ctx.from.first_name || 'User'} (@${ctx.from.username || 'N/A'})\n` +
+                `• *User ID:* \`${userId}\`\n` +
+                `━━━━━━━━━━━━━━━━━━\n\n` +
+                `📝 *Message:* \n${text}`,
+                {
+                    parse_mode: 'Markdown',
+                    ...Markup.inlineKeyboard([
+                        [Markup.button.callback('✍️ Reply to User', `reply_support_${userId}`)]
+                    ])
+                }
+            );
+        } catch (e) {
+            console.error("Failed to forward support message to admin:", e.message);
+        }
+
+        return ctx.reply("✅ আপনার বার্তাটি অ্যাডমিনের কাছে পাঠানো হয়েছে। অনুগ্রহ করে কিছুক্ষণ অপেক্ষা করুন, অ্যাডমিন উত্তর দিলে আপনি এখানে নোটিফিকেশন পাবেন।");
+    }
+
+    if (session.waitingFor === 'feedback_text' && text) {
+        const rating = session.tempRating || '5';
+        await updateUserSession(userId, { waitingFor: null, tempRating: null });
+
+        const reviewText = text.trim() === '/skip' ? 'No comment' : text.trim();
+
+        // Send feedback notification to Admin and Group
+        const feedbackMsg = `⭐️ *NEW CUSTOMER REVIEW* ⭐️\n` +
+                            `━━━━━━━━━━━━━━━━━━\n` +
+                            `• *From:* ${ctx.from.first_name || 'User'} (@${ctx.from.username || 'N/A'})\n` +
+                            `• *User ID:* \`${userId}\`\n` +
+                            `• *Rating:* ${'⭐'.repeat(parseInt(rating))} (${rating}/5)\n` +
+                            `• *Feedback:* "${reviewText}"\n` +
+                            `━━━━━━━━━━━━━━━━━━`;
+
+        try {
+            await ctx.telegram.sendMessage(ADMIN_ID, feedbackMsg, { parse_mode: 'Markdown' });
+            await ctx.telegram.sendMessage(GROUP_ID, feedbackMsg, { parse_mode: 'Markdown' });
+        } catch (e) {
+            console.error("Failed to forward review feedback to admin/group:", e.message);
+        }
+
+        const botUsername = ctx.botInfo ? `@${ctx.botInfo.username}` : '';
+        return ctx.reply(
+            `❤️ আপনার মূল্যবান মতামত আমাদের সাথে শেয়ার করার জন্য ধন্যবাদ! ভালো থাকবেন। 🚀\n\n${botUsername}`,
+            { parse_mode: 'Markdown' }
+        );
+    }
+
     const state = session.waitingFor;
     if (state === 'trx' || state === 'screenshot' || state === 'payoneer_details') {
-        const proof = text || (ctx.message && ctx.message.photo ? "Photo Provided" : "Details Provided");
+        let proof = text;
+        if (ctx.message && ctx.message.photo && ctx.message.photo.length > 0) {
+            const photo = ctx.message.photo[ctx.message.photo.length - 1];
+            proof = "photo:" + photo.file_id;
+        }
+        if (!proof) {
+            proof = "Details Provided";
+        }
         await updateUserSession(userId, { proof, waitingFor: null });
 
         try { await ctx.deleteMessage(); } catch(e) {}
@@ -1324,13 +1966,40 @@ bot.action(/^copy_code_(.+)$/, async (ctx) => {
     return ctx.reply(`⏳ আপনার লগইন কোড (কপি করতে চেপে ধরে রাখুন):\n\`${code}\``, { parse_mode: 'Markdown' });
 });
 
+async function checkIfTrxIDExists(proof) {
+    if (db.isConfigured()) {
+        const exists = await db.checkIfProofExists(proof);
+        return exists === true;
+    }
+    let found = false;
+    Object.keys(memoryUserOrderHistory).forEach(uid => {
+        memoryUserOrderHistory[uid].forEach(ord => {
+            if (ord.proof === proof) {
+                found = true;
+            }
+        });
+    });
+    return found;
+}
+
 bot.action('final_confirm', async (ctx) => {
-    await ctx.answerCbQuery("Payment Submitted!");
     const user = ctx.from;
     const userId = user.id.toString();
     const session = await getUserSession(userId);
-    const method = session ? session.method || 'Unknown' : 'Unknown';
     const proof = session ? session.proof || 'N/A' : 'N/A';
+
+    // Duplicate TrxID Check
+    const isPhotoProof = proof.startsWith("photo:");
+    if (!isPhotoProof && proof !== 'N/A' && proof !== 'Details Provided') {
+        const isDuplicate = await checkIfTrxIDExists(proof);
+        if (isDuplicate) {
+            await ctx.answerCbQuery();
+            return ctx.reply("❌ *দুঃখিত! এই TrxID-টি ইতিমধ্যে অন্য একটি অর্ডারে ব্যবহার করা হয়েছে।*\n\nঅনুগ্রহ করে সঠিক পেমেন্ট প্রুফ বা TrxID দিয়ে আবার ট্রাই করুন। কোনো সমস্যা হলে সাপোর্টে যোগাযোগ করুন।", { parse_mode: 'Markdown' });
+        }
+    }
+
+    await ctx.answerCbQuery("Payment Submitted!");
+    const method = session ? session.method || 'Unknown' : 'Unknown';
     const packageName = session ? session.packageName || '1 Account AdsPower' : '1 Account AdsPower';
     const price = session ? session.price || 30 : 30;
     const discount = session ? session.discount || 0 : 0;
@@ -1379,21 +2048,40 @@ bot.action('final_confirm', async (ctx) => {
                     `🆔 *User ID:* \`${userId}\`\n` +
                     `📌 *Proof (TrxID/Details):* \`${proof}\``;
 
-    try {
-        await ctx.telegram.sendMessage(ADMIN_ID, proofText, { parse_mode: 'Markdown' });
-    } catch (err) {}
+    const isPhotoProof = proof.startsWith("photo:");
+    const photoFileId = isPhotoProof ? proof.substring(6) : null;
+    const displayProofText = isPhotoProof 
+        ? proofText.replace(`\`${proof}\``, `\`[Screenshot Attached]\``)
+        : proofText;
 
-    try {
-        await ctx.telegram.sendMessage(GROUP_ID, proofText, { parse_mode: 'Markdown' });
-    } catch (err) {}
+    const sendNotification = async (chatId) => {
+        try {
+            if (isPhotoProof) {
+                await ctx.telegram.sendPhoto(chatId, photoFileId, { caption: displayProofText, parse_mode: 'Markdown' });
+            } else {
+                await ctx.telegram.sendMessage(chatId, displayProofText, { parse_mode: 'Markdown' });
+            }
+        } catch (err) {
+            console.error(`Failed to send order notification to ${chatId}:`, err.message);
+            try {
+                await ctx.telegram.sendMessage(chatId, proofText, { parse_mode: 'Markdown' });
+            } catch (fallbackErr) {
+                console.error(`Fallback failed to send order notification to ${chatId}:`, fallbackErr.message);
+            }
+        }
+    };
+
+    await sendNotification(ADMIN_ID);
+    await sendNotification(GROUP_ID);
 
     // Reset user session applied coupon and discount after placing order
     await updateUserSession(userId, { appliedCoupon: '', discount: 0 });
 
     return ctx.reply(
         `✅ *Payment Request Submitted!* ⏳\n\n` +
-        `> আপনার পেমেন্ট ইনফরমেশন সফলভাবে জমা হয়েছে। আমাদের অ্যাডমিন পেমেন্টটি ভেরিফাই করছেন।\n\n` +
-        `☕ *দয়া করে কিছুক্ষণ অপেক্ষা করুন। অর্ডার সম্পূর্ণ হলে আপনাকে চ্যাটে কোডসহ জানানো হবে!* ❤️`,
+        `> আপনার পেমেন্ট ইনফরমেশন সফলভাবে জমা হয়েছে। অ্যাডমিন পেমেন্টটি ভেরিফাই করছেন।\n\n` +
+        `🕒 **অনুগ্রহ করে ৫ মিনিট অপেক্ষা করুন।** অর্ডার সম্পূর্ণ হলে আপনাকে চ্যাটে জানানো হবে।\n\n` +
+        `❌ যদি ৫ মিনিটের বেশি দেরি হয়, তবে অনুগ্রহ করে **Contact Support** অপশন ব্যবহার করে অ্যাডমিনের সাথে যোগাযোগ করুন। ❤️`,
         { parse_mode: 'Markdown' }
     );
 });
@@ -1430,21 +2118,42 @@ bot.action(/^view_order_(.+)$/, async (ctx) => {
 
     if (!ord) return ctx.reply("❌ অর্ডারটি পাওয়া যায়নি বা ইতিমধ্যে প্রসেস হয়ে গেছে।");
 
+    const isPhotoProof = ord.proof && ord.proof.startsWith("photo:");
+    const photoFileId = isPhotoProof ? ord.proof.substring(6) : null;
+
     let detailsMsg = `📋 *Order Details*\n\n` +
                      `👤 *Name:* ${ord.name}\n` +
                      `🔗 *Username:* @${ord.username}\n` +
                      `🆔 *User ID:* \`${ord.userId}\`\n` +
                      `💳 *Method:* ${ord.method}\n` +
                      `📦 *Package:* ${ord.packageName}\n` +
-                     `📌 *Proof:* \`${ord.proof}\``;
+                     `📌 *Proof:* ${isPhotoProof ? '`[Screenshot Attached]`' : `\`${ord.proof}\``}`;
 
-    return ctx.reply(detailsMsg, {
-        parse_mode: 'Markdown',
-        ...Markup.inlineKeyboard([
-            [Markup.button.callback('✅ Confirm & Input Email/Pass', `start_custom_pass_${targetUserId}`)],
-            [Markup.button.callback('❌ Reject Order', `start_reject_order_${targetUserId}`)]
-        ])
-    });
+    const inlineMarkup = Markup.inlineKeyboard([
+        [Markup.button.callback('✅ Confirm & Input Email/Pass', `start_custom_pass_${targetUserId}`)],
+        [Markup.button.callback('❌ Reject Order', `start_reject_order_${targetUserId}`)]
+    ]);
+
+    try {
+        if (isPhotoProof) {
+            return await ctx.replyWithPhoto(photoFileId, {
+                caption: detailsMsg,
+                parse_mode: 'Markdown',
+                ...inlineMarkup
+            });
+        } else {
+            return await ctx.reply(detailsMsg, {
+                parse_mode: 'Markdown',
+                ...inlineMarkup
+            });
+        }
+    } catch (e) {
+        console.error("Failed to display order details with photo:", e.message);
+        return ctx.reply(detailsMsg, {
+            parse_mode: 'Markdown',
+            ...inlineMarkup
+        });
+    }
 });
 
 bot.action(/^start_custom_pass_(.+)$/, async (ctx) => {
@@ -1474,6 +2183,70 @@ bot.action(/^start_reject_order_(.+)$/, async (ctx) => {
     });
 
     return ctx.reply("❌ অর্ডারটি রিজেক্ট করার কারণটি লিখে পাঠান (যেমন: আপনার TrxID মিলছে না):");
+});
+
+bot.action('download_sales_csv', async (ctx) => {
+    if (!isAdmin(ctx)) return ctx.answerCbQuery("Unauthorized!", { show_alert: true });
+    await ctx.answerCbQuery("Generating sales report CSV...");
+
+    try {
+        let orders = [];
+        if (db.isConfigured()) {
+            orders = await db.getAllOrders();
+        } else {
+            // Memory fallback logic
+            Object.keys(memoryUserOrderHistory).forEach(uid => {
+                memoryUserOrderHistory[uid].forEach(ord => {
+                    orders.push({
+                        user_id: uid,
+                        package_name: ord.packageName || 'Unknown Package',
+                        method: ord.method || 'Unknown Method',
+                        proof: ord.proof || 'N/A',
+                        status: ord.status || 'Completed',
+                        created_at: ord.createdAt || new Date().toISOString(),
+                        price_paid: ord.pricePaid || 30
+                    });
+                });
+            });
+        }
+
+        if (!orders || orders.length === 0) {
+            return ctx.reply("❌ কোনো সেলস বা অর্ডারের রেকর্ড পাওয়া যায়নি।");
+        }
+
+        // Construct CSV
+        let csvContent = "\ufeff"; // BOM for UTF-8 Excel support
+        csvContent += "Order ID,Date (UTC),User ID,Package,Method,TrxID/Proof,Price Paid (TK),Status,Email,Password,Login Code\n";
+
+        orders.forEach(ord => {
+            const escape = (val) => {
+                if (val === null || val === undefined) return "";
+                const str = String(val).replace(/"/g, '""');
+                return str.includes(',') || str.includes('\n') || str.includes('"') ? `"${str}"` : str;
+            };
+
+            csvContent += `${escape(ord.id || 'N/A')},` +
+                          `${escape(ord.created_at || ord.createdAt || 'N/A')},` +
+                          `${escape(ord.user_id)},` +
+                          `${escape(ord.package_name)},` +
+                          `${escape(ord.method)},` +
+                          `${escape(ord.proof)},` +
+                          `${escape(ord.price_paid || ord.pricePaid || 0)},` +
+                          `${escape(ord.status)},` +
+                          `${escape(ord.custom_email || '')},` +
+                          `${escape(ord.custom_pass || '')},` +
+                          `${escape(ord.login_code || '')}\n`;
+        });
+
+        const csvBuffer = Buffer.from(csvContent, 'utf-8');
+        return await ctx.replyWithDocument({ source: csvBuffer, filename: `sales_report_${new Date().toISOString().split('T')[0]}.csv` }, {
+            caption: "📊 *AdsPower Bot Sales Report Backup CSV*\n\nআপনার সকল ট্রানজেকশন এবং সেলসের এক্সেল ফাইল ব্যাকআপ সফলভাবে জেনারেট করা হয়েছে।",
+            parse_mode: 'Markdown'
+        });
+    } catch (err) {
+        console.error("Failed to generate sales CSV:", err.message);
+        return ctx.reply(`❌ CSV রিপোর্ট জেনারেট করতে সমস্যা হয়েছে: ${err.message}`);
+    }
 });
 
 async function showTotalUsersStats(ctx) {
@@ -1512,7 +2285,59 @@ bot.action(/^inspect_user_(.+)$/, async (ctx) => {
     if (!isAdmin(ctx)) return;
     await ctx.answerCbQuery();
     const id = ctx.match[1];
-    return ctx.reply(`👤 *User Details*\n• Telegram User ID: \`${id}\``, { parse_mode: 'Markdown' });
+    
+    let userDetails = `👤 *User Details* 👤\n` +
+                      `━━━━━━━━━━━━━━━━━━\n` +
+                      `• *User ID:* \`${id}\`\n` +
+                      `━━━━━━━━━━━━━━━━━━\n` +
+                      `⚠️ Database lookup failed or fallback memory is in use.`;
+
+    try {
+        if (db.isConfigured()) {
+            const users = await db.getAllUsers();
+            const user = users ? users.find(u => String(u.user_id) === id) : null;
+            if (user) {
+                const orders = await db.getUserOrders(id);
+                const totalOrders = orders ? orders.length : 0;
+                const completedOrders = orders ? orders.filter(o => o.status === 'Completed').length : 0;
+                
+                userDetails = `👤 *User Details* 👤\n` +
+                              `━━━━━━━━━━━━━━━━━━\n` +
+                              `• *Name:* ${user.first_name || 'N/A'}\n` +
+                              `• *Username:* @${user.username || 'N/A'}\n` +
+                              `• *User ID:* \`${user.user_id}\`\n` +
+                              `• *Registered:* \`${user.created_at ? new Date(user.created_at).toLocaleString('en-US', { timeZone: 'Asia/Dhaka' }) : 'N/A'}\`\n` +
+                              `• *Last Active:* \`${user.last_active ? new Date(user.last_active).toLocaleString('en-US', { timeZone: 'Asia/Dhaka' }) : 'N/A'}\`\n` +
+                              `━━━━━━━━━━━━━━━━━━\n` +
+                              `🛍 *Order Stats:*\n` +
+                              `• Total Orders: *${totalOrders}*\n` +
+                              `• Completed Orders: *${completedOrders}*`;
+            } else {
+                userDetails = `👤 *User Details* 👤\n` +
+                              `━━━━━━━━━━━━━━━━━━\n` +
+                              `• *User ID:* \`${id}\`\n` +
+                              `━━━━━━━━━━━━━━━━━━\n` +
+                              `❌ User details not found in database.`;
+            }
+        } else {
+            // Memory fallback stats
+            const orders = memoryUserOrderHistory[id] || [];
+            const totalOrders = orders.length;
+            const completedOrders = orders.filter(o => o.status === 'Completed').length;
+            
+            userDetails = `👤 *User Details (Memory Fallback)* 👤\n` +
+                          `━━━━━━━━━━━━━━━━━━\n` +
+                          `• *User ID:* \`${id}\`\n` +
+                          `━━━━━━━━━━━━━━━━━━\n` +
+                          `🛍 *Order Stats:*\n` +
+                          `• Total Orders: *${totalOrders}*\n` +
+                          `• Completed Orders: *${completedOrders}*`;
+        }
+    } catch (err) {
+        console.error("Error fetching user details in admin panel:", err.message);
+    }
+    
+    return ctx.reply(userDetails, { parse_mode: 'Markdown' });
 });
 
 bot.action(/^get_code_(.+)$/, async (ctx) => {
@@ -1555,14 +2380,35 @@ bot.action(/^send_code_admin_(.+)$/, async (ctx) => {
 
 bot.action('login_done', async (ctx) => {
     await ctx.answerCbQuery();
-    const userId = ctx.from.id.toString();
-    const botUsername = ctx.botInfo ? `@${ctx.botInfo.username}` : '';
     return ctx.reply(
-        `❤️ *Thank You for Purchasing from AdsPower Seller BD!*\n` +
-        `Take Love : \`${userId}\`\n\n` +
-        `আপনার প্রিমিয়াম পাস সফলভাবে অ্যাক্টিভ হয়েছে। আমাদের সেবা নেওয়ার জন্য আপনাকে আন্তরিক ধন্যবাদ! যেকোনো প্রয়োজনে আবার যোগাযোগ করবেন। 🚀\n\n` +
-        `${botUsername}`,
-        { parse_mode: 'Markdown' }
+        `❤️ *Thank You for Purchasing from AdsPower Seller BD!*\n\n` +
+        `আপনার প্রিমিয়াম পাস সফলভাবে অ্যাক্টিভ হয়েছে। আমাদের সেবা নেওয়ার জন্য আপনাকে আন্তরিক ধন্যবাদ! 🚀\n\n` +
+        `⭐ *অনুগ্রহ করে আমাদের সার্ভিসটি রেটিং দিন:*`,
+        {
+            parse_mode: 'Markdown',
+            ...Markup.inlineKeyboard([
+                [
+                    Markup.button.callback('⭐ 1', 'rate_1'),
+                    Markup.button.callback('⭐⭐ 2', 'rate_2'),
+                    Markup.button.callback('⭐⭐⭐ 3', 'rate_3'),
+                    Markup.button.callback('⭐⭐⭐⭐ 4', 'rate_4'),
+                    Markup.button.callback('⭐⭐⭐⭐⭐ 5', 'rate_5')
+                ]
+            ])
+        }
+    );
+});
+
+bot.action(/^rate_(\d)$/, async (ctx) => {
+    await ctx.answerCbQuery();
+    const rating = ctx.match[1];
+    const userId = ctx.from.id.toString();
+
+    await updateUserSession(userId, { tempRating: rating, waitingFor: 'feedback_text' });
+
+    return ctx.reply(
+        `✍️ আপনি **${rating} Star** রেটিং দিয়েছেন। ধন্যবাদ! \n\n` +
+        `আমাদের সার্ভিস নিয়ে আপনার কোনো মতামত বা অনুভূতি থাকলে তা লিখে পাঠান (অথবা চাইলে সরাসরি /skip টাইপ করতে পারেন):`
     );
 });
 
@@ -1621,6 +2467,52 @@ bot.action(/^delete_coupon_(.+)$/, async (ctx) => {
     return showCouponsMenu(ctx);
 });
 
+async function runExpiryCheck(req, res) {
+    try {
+        if (!db.isConfigured()) {
+            return res.status(200).json({ message: "Database not configured, skipping cron." });
+        }
+        
+        const completedOrders = await db.getCompletedOrders();
+        if (!completedOrders || completedOrders.length === 0) {
+            return res.status(200).json({ status: "success", message: "No completed orders found." });
+        }
+        
+        const now = new Date();
+        let remindersSent = 0;
+        
+        for (const ord of completedOrders) {
+            if (!ord.created_at || !ord.user_id) continue;
+            
+            const orderDate = new Date(ord.created_at);
+            const diffTime = Math.abs(now - orderDate);
+            const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+            
+            // If it has been exactly 9 days (warning)
+            if (diffDays === 9) {
+                try {
+                    await bot.telegram.sendMessage(
+                        ord.user_id,
+                        `⚠️ *AdsPower Package Expiry Reminder* ⚠️\n` +
+                        `━━━━━━━━━━━━━━━━━━\n` +
+                        `প্রিয় গ্রাহক, আপনার ক্রয়কৃত প্যাকেজ \`${ord.package_name || 'AdsPower'}\` এর মেয়াদ আগামীকাল শেষ হতে যাচ্ছে।\n\n` +
+                        `🛒 নির্বিঘ্ন সেবা বজায় রাখতে এখনই রিনিউ করতে /start এ যান! 🚀`,
+                        { parse_mode: 'Markdown' }
+                    );
+                    remindersSent++;
+                } catch (err) {
+                    console.error(`Failed to send renewal reminder to ${ord.user_id}:`, err.message);
+                }
+            }
+        }
+        
+        return res.status(200).json({ status: "success", remindersSent });
+    } catch (err) {
+        console.error("Cron expiry check error:", err.message);
+        return res.status(500).json({ error: err.message });
+    }
+}
+
 // Vercel Serverless Function Handler
 module.exports = async (req, res) => {
     if (req.method === 'POST') {
@@ -1633,6 +2525,15 @@ module.exports = async (req, res) => {
         }
     } else {
         try {
+            const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+            if (url.searchParams.get('cron') === 'expiry_check') {
+                return await runExpiryCheck(req, res);
+            }
+            if (url.searchParams.get('cron') === 'fake_sales') {
+                await sendFakeSaleToGroup();
+                return res.status(200).json({ status: "success", message: "Fake sale triggered." });
+            }
+
             // Set bot slash commands list in Telegram
             await bot.telegram.setMyCommands([
                 { command: 'start', description: 'Start the bot / প্রধান মেনু 🚀' }
@@ -1644,3 +2545,14 @@ module.exports = async (req, res) => {
         }
     }
 };
+
+// Start persistent launch if run directly (VPS / Local Hosting)
+if (require.main === module || process.env.PERSISTENT === 'true') {
+    bot.launch().then(() => {
+        console.log("Bot launched in persistent mode!");
+        // Persistent 30s interval for fake sales
+        setInterval(async () => {
+            await sendFakeSaleToGroup();
+        }, 30000);
+    });
+}
