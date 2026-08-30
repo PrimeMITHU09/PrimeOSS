@@ -11,6 +11,95 @@ const bot = new Telegraf(BOT_TOKEN);
 // In-memory fallback for maintenance mode (just in case)
 let memoryMaintenanceMode = false;
 let memoryFakeSalesEnabled = false; // in-memory fallback for fake sales loop
+let memoryForceJoinEnabled = true;
+let memoryReferRewardAmount = 3;
+let memorySellingHoursEnabled = true;
+
+async function getForceJoinStatus() {
+    if (db.isConfigured()) {
+        const coupon = await db.getCoupon('SYSTEM_FORCE_JOIN_ENABLED');
+        if (coupon) {
+            return coupon.discount_amount === 1;
+        }
+        return true; // default enabled
+    }
+    return memoryForceJoinEnabled;
+}
+
+async function setForceJoinStatus(enabled) {
+    const val = enabled ? 1 : 0;
+    if (db.isConfigured()) {
+        await db.createCoupon('SYSTEM_FORCE_JOIN_ENABLED', val);
+    } else {
+        memoryForceJoinEnabled = enabled;
+    }
+}
+
+async function getReferRewardAmount() {
+    if (db.isConfigured()) {
+        const coupon = await db.getCoupon('SYSTEM_REFER_REWARD_AMOUNT');
+        if (coupon) {
+            return coupon.discount_amount;
+        }
+        return 3; // default 3 TK
+    }
+    return memoryReferRewardAmount;
+}
+
+async function setReferRewardAmount(amount) {
+    if (db.isConfigured()) {
+        await db.createCoupon('SYSTEM_REFER_REWARD_AMOUNT', amount);
+    } else {
+        memoryReferRewardAmount = amount;
+    }
+}
+
+async function getSellingHoursStatus() {
+    if (db.isConfigured()) {
+        const coupon = await db.getCoupon('SYSTEM_SELLING_HOURS_ENABLED');
+        if (coupon) {
+            return coupon.discount_amount === 1;
+        }
+        return true; // default enabled (has 11am-11pm limits)
+    }
+    return memorySellingHoursEnabled;
+}
+
+async function setSellingHoursStatus(enabled) {
+    const val = enabled ? 1 : 0;
+    if (db.isConfigured()) {
+        await db.createCoupon('SYSTEM_SELLING_HOURS_ENABLED', val);
+    } else {
+        memorySellingHoursEnabled = enabled;
+    }
+}
+
+const memoryStock = {};
+
+async function getPackageStockStatus(pkgKey) {
+    const dbKey = `STOCK_${pkgKey.toUpperCase()}`;
+    if (db.isConfigured()) {
+        const coupon = await db.getCoupon(dbKey);
+        if (coupon) {
+            return coupon.discount_amount === 1;
+        }
+        return true; // default in stock
+    }
+    if (memoryStock[pkgKey] !== undefined) {
+        return memoryStock[pkgKey];
+    }
+    return true; // default in stock
+}
+
+async function setPackageStockStatus(pkgKey, inStock) {
+    const dbKey = `STOCK_${pkgKey.toUpperCase()}`;
+    const val = inStock ? 1 : 0;
+    if (db.isConfigured()) {
+        await db.createCoupon(dbKey, val);
+    } else {
+        memoryStock[pkgKey] = inStock;
+    }
+}
 
 async function getFakeSalesStatus() {
     if (db.isConfigured()) {
@@ -196,7 +285,7 @@ async function checkAndRewardReferral(newUserId, ctx) {
         if (referrerId) {
             const randomSuffix = Math.random().toString(36).substring(2, 7).toUpperCase();
             const rewardCouponCode = `REF_${randomSuffix}`;
-            const rewardAmount = 3; // 3 TK Discount
+            const rewardAmount = await getReferRewardAmount();
 
             if (db.isConfigured()) {
                 await db.createCoupon(rewardCouponCode, rewardAmount);
@@ -293,8 +382,41 @@ async function getLeaderboardText() {
     return text;
 }
 
+async function getReferralStats(referrerId) {
+    let pending = 0;
+    let successful = 0;
+
+    if (db.isConfigured()) {
+        const coupons = await db.getAllCoupons();
+        if (coupons) {
+            coupons.forEach(cp => {
+                if (cp.code.startsWith('REFERRAL|')) {
+                    const parts = cp.code.split('|');
+                    if (parts[2] === referrerId) {
+                        pending++;
+                    }
+                } else if (cp.code.startsWith('REWARDED_REF|')) {
+                    const parts = cp.code.split('|');
+                    if (parts[1] === referrerId) {
+                        successful++;
+                    }
+                }
+            });
+        }
+    } else {
+        successful = memoryRewardedReferrals[referrerId] ? memoryRewardedReferrals[referrerId].length : 0;
+        pending = Object.values(memoryReferrals).filter(rId => rId === referrerId).length;
+    }
+    return { pending, successful };
+}
+
 async function checkUserJoinedGroup(ctx, userId) {
     if (userId.toString() === ADMIN_ID) return true;
+
+    // Check if Force Join is enabled in Bot Control
+    const isForceJoinEnabled = await getForceJoinStatus();
+    if (!isForceJoinEnabled) return true; // auto pass membership check!
+
     try {
         const member = await ctx.telegram.getChatMember(parseInt(GROUP_ID), parseInt(userId));
         const status = member.status;
@@ -305,7 +427,11 @@ async function checkUserJoinedGroup(ctx, userId) {
     }
 }
 
-function isOutsideSellingHours() {
+async function isOutsideSellingHours() {
+    // Check if selling hours constraint is enabled
+    const enabled = await getSellingHoursStatus();
+    if (!enabled) return false; // bypassed, so not outside selling hours
+
     try {
         const bdTimeString = new Date().toLocaleString("en-US", { timeZone: "Asia/Dhaka", hour: "2-digit", hour12: false });
         const hours = parseInt(bdTimeString, 10);
@@ -374,24 +500,33 @@ async function sendFakeSaleToGroup() {
 
         // 4 or 5 stars
         const rating = Math.random() > 0.3 ? 5 : 4;
-        const orderId = Math.floor(10000 + Math.random() * 90000);
+        const ratingStars = '⭐'.repeat(rating);
+        const ratingNum = rating.toFixed(1);
+        const accountsCount = selectedPkg.name.split(' ')[0];
+        const pkgDisplay = `ADSPOWER × ${accountsCount}`;
 
-        const fakeSalesMsg = `🛒 *AdsPower Order Completed!* 🛒\n` +
-                             `▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬\n` +
-                             `🆔 *Order ID:* \`#${orderId}\`\n` +
-                             `📦 *Package:* \`${selectedPkg.name}\`\n` +
-                             `💳 *Payment:* \`${method}\`\n` +
-                             `💰 *Amount:* \`${selectedPkg.price} TK\`\n` +
-                             `▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬\n` +
-                             `👤 *Customer:* \`${name}\`\n` +
-                             `📧 *Email:* \`${maskedEmail}\`\n` +
-                             `🔑 *Password:* \`••••••••\`\n` +
-                             `⏳ *Status:* ✅ \`Successfully Delivered\`\n` +
-                             `▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬\n` +
-                             `⭐️ *Customer Rating:* ${'⭐'.repeat(rating)} (${rating}/5)\n` +
-                             `💬 *Feedback:* "${review}"\n` +
-                             `▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬\n` +
-                             `💎 *AdsPower Seller BD* 🚀`;
+        const fakeSalesMsg = `> 🟢 *ORDER SUCCESSFUL*\n` +
+                             `╔════════════════════╗\n` +
+                             `  ***🛒 ADSPOWER ACCOUNT***\n` +
+                             `╚════════════════════╝\n` +
+                             `╭──────────────────╮\n` +
+                             `│ 🆔 ORDER \`#${orderId}\`\n` +
+                             `│ 📦 \`${pkgDisplay}\`\n` +
+                             `│ 💰 \`${selectedPkg.price} TK\`\n` +
+                             `│ 💳 \`${method.toUpperCase()}\`\n` +
+                             `╰──────────────────╯\n\n` +
+                             `╭──────────────────╮\n` +
+                             `│ 🔐 **CUSTOMER DATA**   │\n` +
+                             `╰──────────────────╯\n\n` +
+                             ` >👤 \`${name}\`\n` +
+                             `▬▬▬▬▬▬\n` +
+                             ` > 📧 \`${maskedEmail}\`\n` +
+                             `  >🔑 \`••••••••\`\n\n` +
+                             `_📡 STATUS → 🟢 **DELIVERED**_\n` +
+                             `***📊 RATING → ${ratingStars} \`${ratingNum}\`***\n\n` +
+                             `***💬 FEEDBACK RECEIVED***\n\n` +
+                             `> ${review}\n\n` +
+                             `> 🚀 **ADSPOWER SELLER BD**`;
 
         await bot.telegram.sendMessage(parseInt(GROUP_ID), fakeSalesMsg, { parse_mode: 'Markdown' });
     } catch (err) {
@@ -414,7 +549,8 @@ bot.use(async (ctx, next) => {
             }
 
             // 2. Check scheduled selling hours (11:00 AM - 11:00 PM BD Time)
-            if (isOutsideSellingHours()) {
+            const outside = await isOutsideSellingHours();
+            if (outside) {
                 const offHoursMsg = 
                     `✨ *SELLING TIME* ✨\n` +
                     `🕚 সকাল ১১:০০টা — রাত ১১:০০টা\n` +
@@ -705,7 +841,7 @@ function getMainMenu(userName) {
                 [Markup.button.callback('📦 AdsPower Details', 'details')],
                 [Markup.button.callback('🛒 Buy Now', 'buy_options')],
                 [Markup.button.callback('👤 My Profile', 'profile'), Markup.button.callback('🛍 My Order', 'my_order')],
-                [Markup.button.callback('🧾 Transaction', 'transaction'), Markup.button.callback('❓ FAQ & Help Guide', 'faq_menu')],
+                [Markup.button.callback('📢 Offers & Notice', 'notice_board'), Markup.button.callback('❓ FAQ & Help Guide', 'faq_menu')],
                 [Markup.button.callback('🏆 Leaderboard', 'leaderboard'), Markup.button.callback('📞 Contact Support', 'support')]
             ])
         }
@@ -896,6 +1032,10 @@ bot.action('buy_options', async (ctx) => {
     // Reset applied coupon when user selects a new package
     await updateUserSession(user.id.toString(), { appliedCoupon: '', discount: 0 });
 
+    const stock1 = await getPackageStockStatus('pkg_1');
+    const stock3 = await getPackageStockStatus('pkg_3');
+    const stock5 = await getPackageStockStatus('pkg_5');
+
     const pkgText = `⭐️ *AdsPower Seller BD* ⭐️\n` +
                     `📦 *Select Packages / প্যাকেজ সিলেক্ট করুন*:\n` +
                     `━━━━━━━━━━━━━━━━━━\n\n` +
@@ -903,9 +1043,9 @@ bot.action('buy_options', async (ctx) => {
     const pkgExtra = {
         parse_mode: 'Markdown',
         ...Markup.inlineKeyboard([
-            [Markup.button.callback('⚡ 1 Account AdsPower = 30 TK', 'pkg_1_30')],
-            [Markup.button.callback('🔥 3 Accounts AdsPower = 80 TK', 'pkg_3_80')],
-            [Markup.button.callback('👑 5 Accounts AdsPower = 135 TK', 'pkg_5_135')],
+            [Markup.button.callback(`⚡ 1 Account AdsPower = 30 TK ${stock1 ? '🟢' : '🔴 (Out of stock)'}`, 'pkg_1_30')],
+            [Markup.button.callback(`🔥 3 Accounts AdsPower = 80 TK ${stock3 ? '🟢' : '🔴 (Out of stock)'}`, 'pkg_3_80')],
+            [Markup.button.callback(`👑 5 Accounts AdsPower = 135 TK ${stock5 ? '🟢' : '🔴 (Out of stock)'}`, 'pkg_5_135')],
             [Markup.button.callback('⬅️ Back to Menu', 'main_menu')]
         ])
     };
@@ -956,11 +1096,17 @@ async function showPaymentSelectionScreen(ctx, userId) {
 
 // Callback handler for package selection
 bot.action(/^pkg_(\d+)_(\d+)$/, async (ctx) => {
-    await ctx.answerCbQuery();
     const count = ctx.match[1];
     const price = ctx.match[2];
     const userId = ctx.from.id.toString();
 
+    // Check Stock first
+    const isAvailable = await getPackageStockStatus(`pkg_${count}`);
+    if (!isAvailable) {
+        return ctx.answerCbQuery("❌ দুঃখিত! এই প্যাকেজটি বর্তমানে আউট অব স্টক।", { show_alert: true });
+    }
+
+    await ctx.answerCbQuery();
     const packageName = `${count} Account${count > 1 ? 's' : ''} AdsPower`;
     
     // Save package selection in user session
@@ -981,12 +1127,30 @@ bot.action('profile', async (ctx) => {
     const user = ctx.from;
     const botUsername = ctx.botInfo ? ctx.botInfo.username : 'AdsPowerSellerBDBot';
     const refLink = `https://t.me/${botUsername}?start=ref_${user.id}`;
+
+    let inviteLink = "https://t.me/AdsPowerSellerBDGroup";
+    try {
+        const chat = await ctx.telegram.getChat(parseInt(GROUP_ID));
+        if (chat.invite_link) {
+            inviteLink = chat.invite_link;
+        } else if (chat.username) {
+            inviteLink = `https://t.me/${chat.username}`;
+        }
+    } catch (err) {}
+
+    const stats = await getReferralStats(user.id.toString());
+    const totalEarnings = stats.successful * 3;
     
     const profileText = `👤 *My Profile Info / আমার প্রোফাইল* 👤\n` +
                         `━━━━━━━━━━━━━━━━━━\n` +
                         `• *Name:* \`${user.first_name}\`\n` +
                         `• *Username:* @${user.username || 'N/A'}\n` +
                         `• *User ID:* \`${user.id}\` (ক্লিক করে কপি করুন)\n` +
+                        `━━━━━━━━━━━━━━━━━━\n` +
+                        `👥 *Referral Statistics / রেফার ড্যাশবোর্ড:*\n` +
+                        `• *Successful Refers (সফল রেফার):* \`${stats.successful}\` জন\n` +
+                        `• *Pending Refers (পেন্ডিং রেফার):* \`${stats.pending}\` জন\n` +
+                        `• *Total Earnings (মোট কমিশন আয়):* \`${totalEarnings} TK\`\n` +
                         `━━━━━━━━━━━━━━━━━━\n` +
                         `👥 *Refer & Earn (রেফারেল লিংক):*\n` +
                         `• \`${refLink}\` (ক্লিক করে কপি করুন)\n` +
@@ -995,7 +1159,10 @@ bot.action('profile', async (ctx) => {
                         `💎 *AdsPower Seller BD* এর সাথে থাকার জন্য ধন্যবাদ!`;
     return ctx.reply(profileText, {
         parse_mode: 'Markdown',
-        ...Markup.inlineKeyboard([[Markup.button.callback('⬅️ Back to Menu', 'main_menu')]])
+        ...Markup.inlineKeyboard([
+            [Markup.button.url('👥 Join Our Group', inviteLink)],
+            [Markup.button.callback('⬅️ Back to Menu', 'main_menu')]
+        ])
     });
 });
 
@@ -1021,21 +1188,29 @@ bot.action('my_order', async (ctx) => {
         
         let statusEmoji = "⏳";
         let statusTextBengali = "অ্যাডমিন ভেরিফাই করছেন...";
+        let progressBar = "";
         
         if (ord.status === 'Completed') {
             statusEmoji = "✅";
             statusTextBengali = "সম্পন্ন হয়েছে (Delivered)";
+            progressBar = "`✅ Verified ➔ ⚙️ Delivered ➔ 📦 Completed`";
         } else if (ord.status === 'Rejected') {
             statusEmoji = "❌";
-            statusTextBengali = "বাতিল করা হয়েছে (Rejected)";
+            statusTextBengali = "প্রত্যাখ্যান করা হয়েছে (Rejected)";
+            progressBar = "`❌ Order Rejected`";
         } else if (ord.status === 'Cancelled') {
             statusEmoji = "❌";
             statusTextBengali = "বাতিল করা হয়েছে (Cancelled)";
+            progressBar = "`❌ Order Cancelled`";
+        } else {
+            // Pending Verification
+            progressBar = "`⏳ Pending Verification ➔ ⚙️ Processing ➔ 📦 Completed`";
         }
 
         text += `📦 *Order #${index + 1}:* \`${ord.packageName}\`\n` +
                 `   💳 *Method:* \`${ord.method ? ord.method.split('|')[0] : 'Unknown'}\`\n` +
                 `   ${statusEmoji} *Status:* *${ord.status}* (${statusTextBengali})\n` +
+                `   📈 *Progress:* ${progressBar}\n` +
                 `   📅 *Date:* \`${dateStr}\`\n`;
                 
         if (ord.status === 'Completed') {
@@ -1154,6 +1329,20 @@ bot.action('transaction', async (ctx) => {
                    `> 🟢 **Verified Account Profile**\n\n` +
                    `🔒 আপনার সকল লেনদেন এবং অ্যাকাউন্ট তথ্য আমাদের সিস্টেমে সম্পূর্ণ নিরাপদ ও সুরক্ষিত রয়েছে।`;
     return ctx.reply(txText, {
+        parse_mode: 'Markdown',
+        ...Markup.inlineKeyboard([[Markup.button.callback('⬅️ Back to Menu', 'main_menu')]])
+    });
+});
+
+bot.action('notice_board', async (ctx) => {
+    await ctx.answerCbQuery();
+    const noticeText = await getNoticeText();
+    const text = `📢 *AdsPower Seller BD - Notice Board* 📢\n` +
+                 `━━━━━━━━━━━━━━━━━━\n\n` +
+                 `${noticeText}\n\n` +
+                 `━━━━━━━━━━━━━━━━━━\n` +
+                 `🔔 নতুন আপডেট ও ডিসকাউন্ট অফার পেতে গ্রুপে একটিভ থাকুন!`;
+    return ctx.reply(text, {
         parse_mode: 'Markdown',
         ...Markup.inlineKeyboard([[Markup.button.callback('⬅️ Back to Menu', 'main_menu')]])
     });
@@ -1446,10 +1635,15 @@ async function showBotControlPanel(ctx) {
     const isNoticeEnabled = await getNoticeStatus();
     const noticeText = await getNoticeText();
     const isFakeSalesEnabled = await getFakeSalesStatus();
+    const isForceJoinEnabled = await getForceJoinStatus();
+    const isSellingHoursEnabled = await getSellingHoursStatus();
+    const referRewardAmount = await getReferRewardAmount();
 
     const botStatusText = isMaintenance ? '🔴 **OFF (Maintenance Mode is ON)**' : '🟢 **ON (Normal Mode is ON)**';
     const noticeStatusText = isNoticeEnabled ? '🟢 **ENABLED (Active)**' : '🔴 **DISABLED (Inactive)**';
     const fakeSalesStatusText = isFakeSalesEnabled ? '🟢 **ENABLED (Sending Fake Sales)**' : '🔴 **DISABLED (Stopped)**';
+    const forceJoinStatusText = isForceJoinEnabled ? '🟢 **ENABLED (Force Join is ON)**' : '🔴 **DISABLED (Everyone can access)**';
+    const sellingHoursStatusText = isSellingHoursEnabled ? '🟢 **ENABLED (Selling limits: 11am-11pm)**' : '🔴 **DISABLED (24-Hour Selling is ON)**';
 
     const bkashNum = await getWallet('bkash');
     const nagadNum = await getWallet('nagad');
@@ -1459,7 +1653,10 @@ async function showBotControlPanel(ctx) {
     const panelMsg = `⚙️ *AdsPower Bot Golden Control Panel*\n\n` +
                      `• **Bot Status:** ${botStatusText}\n` +
                      `• **Highlight Notice:** ${noticeStatusText}\n` +
-                     `• **Fake Sales Loop:** ${fakeSalesStatusText}\n\n` +
+                     `• **Fake Sales Loop:** ${fakeSalesStatusText}\n` +
+                     `• **Force Group Join:** ${forceJoinStatusText}\n` +
+                     `• **Selling Time Limit:** ${sellingHoursStatusText}\n` +
+                     `• **Refer Reward Amount:** \`${referRewardAmount} TK\`\n\n` +
                      `📢 **Notice Text:**\n` +
                      `> ${noticeText}\n\n` +
                      `💳 **Wallet Numbers / IDs:**\n` +
@@ -1480,6 +1677,14 @@ async function showBotControlPanel(ctx) {
         [
             Markup.button.callback(isFakeSalesEnabled ? '🔕 Disable Fake Sales' : '🔔 Enable Fake Sales', 'fake_sales_toggle'),
             Markup.button.callback('💳 Update Wallets', 'wallets_menu')
+        ],
+        [
+            Markup.button.callback(isForceJoinEnabled ? '🔕 Disable Force Join' : '🔔 Enable Force Join', 'force_join_toggle'),
+            Markup.button.callback(isSellingHoursEnabled ? '🔕 Disable Time Limits (24h)' : '🔔 Enable Time Limits (11am-11pm)', 'selling_hours_toggle')
+        ],
+        [
+            Markup.button.callback('💰 Edit Refer Bonus', 'edit_refer_reward'),
+            Markup.button.callback('📦 Manage Stock', 'stock_menu')
         ]
     ]);
 
@@ -1648,6 +1853,17 @@ bot.on(['text', 'photo'], async (ctx) => {
                 return showBotControlPanel(ctx);
             }
 
+            if (state === 'waiting_for_refer_reward' && text) {
+                const amount = parseInt(text.trim());
+                await clearAdminSession(userId);
+                if (isNaN(amount) || amount < 0) {
+                    return ctx.reply("❌ ভুল ইনপুট! বোনাস মূল্য অবশ্যই একটি পজিটিভ সংখ্যা হতে হবে।");
+                }
+                await setReferRewardAmount(amount);
+                await ctx.reply(`✅ রেফারেল বোনাস সফলভাবে আপডেট করা হয়েছে! নতুন মূল্য: *${amount} TK*`, { parse_mode: 'Markdown' });
+                return showBotControlPanel(ctx);
+            }
+
             if (state.startsWith('waiting_for_wallet_') && text) {
                 const type = state.replace('waiting_for_wallet_', '');
                 await clearAdminSession(userId);
@@ -1668,19 +1884,40 @@ bot.on(['text', 'photo'], async (ctx) => {
             if (state === 'waiting_for_coupon_discount' && text) {
                 const discount = parseInt(text.trim());
                 const couponCode = extraData;
-                await clearAdminSession(userId);
 
                 if (isNaN(discount)) {
+                    await clearAdminSession(userId);
                     return ctx.reply("❌ ভুল ইনপুট! ডিসকাউন্ট সংখ্যায় হতে হবে। কুপন তৈরি বাতিল করা হয়েছে।");
                 }
 
-                if (db.isConfigured()) {
-                    await db.createCoupon(couponCode, discount);
-                } else {
-                    memoryCoupons[couponCode] = discount;
+                await updateAdminSession(userId, {
+                    step: 'waiting_for_coupon_limit',
+                    extraData: JSON.stringify({ code: couponCode, discount })
+                });
+
+                return ctx.reply("🎟️ এই কুপনটির জন্য ব্যবহারের সর্বোচ্চ সীমা (Limit) লিখে পাঠান (যেমন: 10 দিলে সর্বোচ্চ ১০ বার ব্যবহার করা যাবে; আনলিমিটেড করতে 0 লিখে পাঠান):");
+            }
+
+            if (state === 'waiting_for_coupon_limit' && text) {
+                const limit = parseInt(text.trim());
+                const data = JSON.parse(extraData);
+                const couponCode = data.code;
+                const discount = data.discount;
+                await clearAdminSession(userId);
+
+                if (isNaN(limit) || limit < 0) {
+                    return ctx.reply("❌ ভুল ইনপুট! লিমিট অবশ্যই ০ বা পজিটিভ সংখ্যা হতে হবে। কুপন তৈরি বাতিল করা হয়েছে।");
                 }
 
-                await ctx.reply(`✅ কুপন কোড সফলভাবে যুক্ত হয়েছে!\n• Code: *${couponCode}*\n• Discount: *${discount} TK*\n\n📢 কাস্টমারদের কাছে কুপনটির নোটিফিকেশন ব্রডকাস্ট করা হচ্ছে...`, { parse_mode: 'Markdown' });
+                const finalCouponCode = limit > 0 ? `LIMIT|${couponCode}|${limit}|0` : couponCode;
+
+                if (db.isConfigured()) {
+                    await db.createCoupon(finalCouponCode, discount);
+                } else {
+                    memoryCoupons[finalCouponCode] = discount;
+                }
+
+                await ctx.reply(`✅ কুপন কোড সফলভাবে যুক্ত হয়েছে!\n• Code: *${couponCode}*\n• Discount: *${discount} TK*\n• Limit: *${limit > 0 ? limit + ' uses' : 'Unlimited'}*\n\n📢 কাস্টমারদের কাছে কুপনটির নোটিফিকেশন ব্রডকাস্ট করা হচ্ছে...`, { parse_mode: 'Markdown' });
 
                 // Auto Coupon Announcement Broadcast
                 const userList = await getUserIdsForBroadcast();
@@ -1688,7 +1925,8 @@ bot.on(['text', 'photo'], async (ctx) => {
                                     `━━━━━━━━━━━━━━━━━━\n` +
                                     `নতুন প্রোমো কোড ব্যবহার করে আকর্ষণীয় ডিসকাউন্ট পান!\n\n` +
                                     `• Coupon Code: *${couponCode}*\n` +
-                                    `• Discount Amount: *${discount} TK*\n\n` +
+                                    `• Discount Amount: *${discount} TK*\n` +
+                                    (limit > 0 ? `• Limit: *First ${limit} customers only!* ⏳\n\n` : `\n`) +
                                     `🛒 এখনই কেনাকাটা করতে /start এ যান! 🚀`;
 
                 let successCount = 0;
@@ -1771,7 +2009,49 @@ bot.on(['text', 'photo'], async (ctx) => {
                 const customEmailValue = parsedAccounts.length === 1 ? parsedAccounts[0].email : rawCustomEmail;
 
                 if (db.isConfigured()) {
+                    const orderObj = await db.getOrderForUser(targetUser);
                     await db.updateOrderStatus(targetUser, 'Completed', customEmailValue, customPassValue);
+                    
+                    if (orderObj && orderObj.method) {
+                        const parts = orderObj.method.split('|');
+                        const appliedCoupon = parts[3];
+                        if (appliedCoupon) {
+                            const allCoupons = await db.getAllCoupons();
+                            if (allCoupons) {
+                                const match = allCoupons.find(cp => cp.code.startsWith(`LIMIT|${appliedCoupon.toUpperCase()}|`));
+                                if (match) {
+                                    const limitParts = match.code.split('|');
+                                    const code = limitParts[1];
+                                    const maxUses = parseInt(limitParts[2]);
+                                    const newUses = parseInt(limitParts[3]) + 1;
+                                    
+                                    await db.deleteCoupon(match.code);
+                                    
+                                    if (newUses < maxUses) {
+                                        await db.createCoupon(`LIMIT|${code}|${maxUses}|${newUses}`, match.discount_amount);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    const sessionObj = await getUserSession(targetUser);
+                    if (sessionObj && sessionObj.appliedCoupon) {
+                        const matchKey = Object.keys(memoryCoupons).find(k => k.startsWith(`LIMIT|${sessionObj.appliedCoupon.toUpperCase()}|`));
+                        if (matchKey) {
+                            const limitParts = matchKey.split('|');
+                            const code = limitParts[1];
+                            const maxUses = parseInt(limitParts[2]);
+                            const newUses = parseInt(limitParts[3]) + 1;
+                            
+                            const discVal = memoryCoupons[matchKey];
+                            delete memoryCoupons[matchKey];
+                            
+                            if (newUses < maxUses) {
+                                memoryCoupons[`LIMIT|${code}|${maxUses}|${newUses}`] = discVal;
+                            }
+                        }
+                    }
                 }
                 
                 // Check if this user was referred and reward the referrer
@@ -1818,19 +2098,28 @@ bot.on(['text', 'photo'], async (ctx) => {
                     const firstLetter = buyerName.substring(0, 2).toLowerCase();
                     const maskedEmail = `${firstLetter}***@emalupe.com`;
 
-                    const realSaleMsg = `🛒 *AdsPower Order Completed!* 🛒\n` +
-                                         `▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬\n` +
-                                         `🆔 *Order ID:* \`#${orderId}\`\n` +
-                                         `📦 *Package:* \`${pName}\`\n` +
-                                         `💳 *Payment:* \`${pMethod}\`\n` +
-                                         `💰 *Amount:* \`${pricePaid} TK\`\n` +
-                                         `▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬\n` +
-                                         `👤 *Customer:* \`${buyerName}\`\n` +
-                                         `📧 *Email:* \`${maskedEmail}\`\n` +
-                                         `🔑 *Password:* \`••••••••\`\n` +
-                                         `⏳ *Status:* ✅ \`Successfully Delivered\`\n` +
-                                         `▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬\n` +
-                                         `💎 *AdsPower Seller BD* 🚀`;
+                    const accountsCount = pName.match(/\d+/) ? pName.match(/\d+/)[0] : '1';
+                    const pkgDisplay = `ADSPOWER × ${accountsCount}`;
+
+                    const realSaleMsg = `> 🟢 *ORDER SUCCESSFUL*\n` +
+                                         `╔════════════════════╗\n` +
+                                         `  ***🛒 ADSPOWER ACCOUNT***\n` +
+                                         `╚════════════════════╝\n` +
+                                         `╭──────────────────╮\n` +
+                                         `│ 🆔 ORDER \`#${orderId}\`\n` +
+                                         `│ 📦 \`${pkgDisplay}\`\n` +
+                                         `│ 💰 \`${pricePaid} TK\`\n` +
+                                         `│ 💳 \`${pMethod.toUpperCase()}\`\n` +
+                                         `╰──────────────────╯\n\n` +
+                                         `╭──────────────────╮\n` +
+                                         `│ 🔐 **CUSTOMER DATA**   │\n` +
+                                         `╰──────────────────╯\n\n` +
+                                         ` >👤 \`${buyerName}\`\n` +
+                                         `▬▬▬▬▬▬\n` +
+                                         ` > 📧 \`${maskedEmail}\`\n` +
+                                         `  >🔑 \`••••••••\`\n\n` +
+                                         `_📡 STATUS → 🟢 **DELIVERED**_\n` +
+                                         `> 🚀 **ADSPOWER SELLER BD**`;
 
                     await ctx.telegram.sendMessage(parseInt(GROUP_ID), realSaleMsg, { parse_mode: 'Markdown' });
                 } catch (err) {
@@ -1907,10 +2196,38 @@ bot.on(['text', 'photo'], async (ctx) => {
 
         let coupon = null;
         if (db.isConfigured()) {
-            coupon = await db.getCoupon(inputCode);
+            const allCoupons = await db.getAllCoupons();
+            if (allCoupons) {
+                coupon = allCoupons.find(cp => cp.code === inputCode);
+                if (!coupon) {
+                    const match = allCoupons.find(cp => cp.code.startsWith(`LIMIT|${inputCode}|`));
+                    if (match) {
+                        const parts = match.code.split('|');
+                        const maxUses = parseInt(parts[2]);
+                        const currentUses = parseInt(parts[3]);
+                        if (currentUses >= maxUses) {
+                            await ctx.reply(`❌ কুপন কোডটির ব্যবহারের সর্বোচ্চ সীমা পার হয়ে গেছে!`);
+                            return showPaymentSelectionScreen(ctx, userId);
+                        }
+                        coupon = { code: inputCode, discount_amount: match.discount_amount };
+                    }
+                }
+            }
         } else {
             if (memoryCoupons[inputCode] !== undefined) {
                 coupon = { code: inputCode, discount_amount: memoryCoupons[inputCode] };
+            } else {
+                const matchKey = Object.keys(memoryCoupons).find(k => k.startsWith(`LIMIT|${inputCode}|`));
+                if (matchKey) {
+                    const parts = matchKey.split('|');
+                    const maxUses = parseInt(parts[2]);
+                    const currentUses = parseInt(parts[3]);
+                    if (currentUses >= maxUses) {
+                        await ctx.reply(`❌ কুপন কোডটির ব্যবহারের সর্বোচ্চ সীমা পার হয়ে গেছে!`);
+                        return showPaymentSelectionScreen(ctx, userId);
+                    }
+                    coupon = { code: inputCode, discount_amount: memoryCoupons[matchKey] };
+                }
             }
         }
 
@@ -1958,14 +2275,23 @@ bot.on(['text', 'photo'], async (ctx) => {
 
         const reviewText = text.trim() === '/skip' ? 'No comment' : text.trim();
 
-        // Send feedback notification to Admin and Group
-        const feedbackMsg = `⭐️ *NEW CUSTOMER REVIEW* ⭐️\n` +
-                            `━━━━━━━━━━━━━━━━━━\n` +
-                            `• *From:* ${ctx.from.first_name || 'User'} (@${ctx.from.username || 'N/A'})\n` +
-                            `• *User ID:* \`${userId}\`\n` +
-                            `• *Rating:* ${'⭐'.repeat(parseInt(rating))} (${rating}/5)\n` +
-                            `• *Feedback:* "${reviewText}"\n` +
-                            `━━━━━━━━━━━━━━━━━━`;
+        const ratingStars = '⭐'.repeat(parseInt(rating));
+        const ratingNum = parseFloat(rating).toFixed(1);
+        const buyerName = ctx.from.first_name || 'User';
+        const usernameStr = ctx.from.username ? ` (@${ctx.from.username})` : '';
+
+        const feedbackMsg = `> ⭐️ *CUSTOMER FEEDBACK RECEIVED*\n` +
+                            `╔════════════════════╗\n` +
+                            `  ***🗣️ SHOP REVIEW***\n` +
+                            `╚════════════════════╝\n` +
+                            `╭──────────────────╮\n` +
+                            `│ 👤 **Customer:** ${buyerName}${usernameStr}\n` +
+                            `│ 🆔 **User ID:** \`${userId}\`\n` +
+                            `│ 📊 **Rating:** ${ratingStars} \`${ratingNum}\`\n` +
+                            `╰──────────────────╯\n\n` +
+                            `***💬 FEEDBACK RECEIVED***\n\n` +
+                            `> ${reviewText}\n\n` +
+                            `> 🚀 **ADSPOWER SELLER BD**`;
 
         try {
             await ctx.telegram.sendMessage(ADMIN_ID, feedbackMsg, { parse_mode: 'Markdown' });
@@ -2519,6 +2845,97 @@ bot.action(/^delete_coupon_(.+)$/, async (ctx) => {
 
     try { await ctx.deleteMessage(); } catch(e) {}
     return showCouponsMenu(ctx);
+});
+
+bot.action('force_join_toggle', async (ctx) => {
+    if (!isAdmin(ctx)) return ctx.answerCbQuery("Unauthorized!", { show_alert: true });
+    const current = await getForceJoinStatus();
+    await setForceJoinStatus(!current);
+    await ctx.answerCbQuery(`Force Join is now ${!current ? 'Enabled' : 'Disabled'}`);
+    return showBotControlPanel(ctx);
+});
+
+bot.action('selling_hours_toggle', async (ctx) => {
+    if (!isAdmin(ctx)) return ctx.answerCbQuery("Unauthorized!", { show_alert: true });
+    const current = await getSellingHoursStatus();
+    await setSellingHoursStatus(!current);
+    await ctx.answerCbQuery(`Time Limits are now ${!current ? 'Enabled' : 'Disabled'}`);
+    return showBotControlPanel(ctx);
+});
+
+bot.action('edit_refer_reward', async (ctx) => {
+    if (!isAdmin(ctx)) return ctx.answerCbQuery("Unauthorized!", { show_alert: true });
+    await ctx.answerCbQuery();
+    await updateAdminSession(ctx.from.id.toString(), {
+        step: 'waiting_for_refer_reward'
+    });
+    return ctx.reply("💰 কুপনের মাধ্যমে রেফারেলের জন্য নতুন কুপন বোনাস মূল্য (টাকায়) লিখে পাঠান (যেমন: 5):");
+});
+
+bot.action('stock_menu', async (ctx) => {
+    if (!isAdmin(ctx)) return ctx.answerCbQuery("Unauthorized!", { show_alert: true });
+    await ctx.answerCbQuery();
+
+    const stock1 = await getPackageStockStatus('pkg_1');
+    const stock3 = await getPackageStockStatus('pkg_3');
+    const stock5 = await getPackageStockStatus('pkg_5');
+
+    const stockText = `📦 *Stock Management Panel* 📦\n\n` +
+                      `নিচের বাটনগুলো ক্লিক করে প্যাকেজের স্টক অন/অফ (In Stock / Out of Stock) করুন:\n\n` +
+                      `• **1 Account:** ${stock1 ? '🟢 In Stock' : '🔴 Out of Stock'}\n` +
+                      `• **3 Accounts:** ${stock3 ? '🟢 In Stock' : '🔴 Out of Stock'}\n` +
+                      `• **5 Accounts:** ${stock5 ? '🟢 In Stock' : '🔴 Out of Stock'}`;
+
+    return ctx.editMessageText(stockText, {
+        parse_mode: 'Markdown',
+        ...Markup.inlineKeyboard([
+            [
+                Markup.button.callback(stock1 ? '🔴 Set 1 Acc Out of Stock' : '🟢 Set 1 Acc In Stock', 'toggle_stock_pkg_1'),
+            ],
+            [
+                Markup.button.callback(stock3 ? '🔴 Set 3 Acc Out of Stock' : '🟢 Set 3 Acc In Stock', 'toggle_stock_pkg_3'),
+            ],
+            [
+                Markup.button.callback(stock5 ? '🔴 Set 5 Acc Out of Stock' : '🟢 Set 5 Acc In Stock', 'toggle_stock_pkg_5'),
+            ],
+            [Markup.button.callback('⬅️ Back to Control Panel', 'bot_control_back')]
+        ])
+    });
+});
+
+bot.action(/^toggle_stock_(pkg_\d+)$/, async (ctx) => {
+    if (!isAdmin(ctx)) return ctx.answerCbQuery("Unauthorized!", { show_alert: true });
+    const pkgKey = ctx.match[1];
+    const current = await getPackageStockStatus(pkgKey);
+    await setPackageStockStatus(pkgKey, !current);
+    await ctx.answerCbQuery(`Stock updated!`);
+    
+    // Smoothly redraw stock menu
+    const stock1 = await getPackageStockStatus('pkg_1');
+    const stock3 = await getPackageStockStatus('pkg_3');
+    const stock5 = await getPackageStockStatus('pkg_5');
+
+    const stockText = `📦 *Stock Management Panel* 📦\n\n` +
+                      `নিচের বাটনগুলো ক্লিক করে প্যাকেজের স্টক অন/অফ (In Stock / Out of Stock) করুন:\n\n` +
+                      `• **1 Account:** ${stock1 ? '🟢 In Stock' : '🔴 Out of Stock'}\n` +
+                      `• **3 Accounts:** ${stock3 ? '🟢 In Stock' : '🔴 Out of Stock'}\n` +
+                      `• **5 Accounts:** ${stock5 ? '🟢 In Stock' : '🔴 Out of Stock'}`;
+
+    return ctx.editMessageText(stockText, {
+        parse_mode: 'Markdown',
+        ...Markup.inlineKeyboard([
+            [
+                Markup.button.callback(stock1 ? '🔴 Set 1 Acc Out of Stock' : '🟢 Set 1 Acc In Stock', 'toggle_stock_pkg_1'),
+            ],
+            [
+                Markup.button.callback(stock3 ? '🔴 Set 3 Acc Out of Stock' : '🟢 Set 3 Acc In Stock', 'toggle_stock_pkg_3'),
+            ],
+            [
+                Markup.button.callback(stock5 ? '🔴 Set 5 Acc Out of Stock' : '🟢 Set 5 Acc In Stock', 'toggle_stock_pkg_5'),
+            ],
+            [Markup.button.callback('⬅️ Back to Control Panel', 'bot_control_back')]
+        ])
+    });
 });
 
 async function runExpiryCheck(req, res) {
