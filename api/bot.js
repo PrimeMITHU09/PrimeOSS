@@ -2547,12 +2547,17 @@ module.exports = async (req, res) => {
 };
 
 // Start persistent launch if run directly (VPS / Local Hosting)
-if (require.main === module || process.env.PERSISTENT === 'true') {
-    bot.launch().then(() => {
-        console.log("Bot launched in persistent mode!");
-        // Persistent 30s interval for fake sales
-        setInterval(async () => {
-            await sendFakeSaleToGroup();
-        }, 30000);
-    });
+try {
+    const isDirectRun = (typeof require !== 'undefined' && require.main === module);
+    if (isDirectRun || process.env.PERSISTENT === 'true') {
+        bot.launch().then(() => {
+            console.log("Bot launched in persistent mode!");
+            // Persistent 30s interval for fake sales
+            setInterval(async () => {
+                await sendFakeSaleToGroup();
+            }, 30000);
+        });
+    }
+} catch (e) {
+    console.error("Failed to check direct run mode:", e.message);
 }
