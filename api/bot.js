@@ -469,6 +469,14 @@ const fakeReviews = [
     "১০০% রিয়েল এবং সিকিউর। কাজ করছে সুন্দর।"
 ];
 
+function escapeMarkdownV2(str, isCode = false) {
+    if (!str) return '';
+    if (isCode) {
+        return str.toString().replace(/[\\`]/g, '\\$&');
+    }
+    return str.toString().replace(/[\\_*\[\]()~`>#+\-=|{}.!]/g, '\\$&');
+}
+
 async function sendFakeSaleToGroup() {
     try {
         let enabled = false;
@@ -504,31 +512,44 @@ async function sendFakeSaleToGroup() {
         const ratingStars = '⭐'.repeat(rating);
         const ratingNum = rating.toFixed(1);
         const accountsCount = selectedPkg.name.split(' ')[0];
-        const pkgDisplay = `ADSPOWER × ${accountsCount}`;
 
-        const fakeSalesMsg = `🟢 **ORDER SUCCESSFUL**\n\n` +
-                             `╔════════════════════╗\n` +
-                             `**🛒 ADSPOWER ACCOUNT**\n` +
-                             `╚════════════════════╝\n\n` +
-                             `╭──────────────────╮\n` +
-                             `│ 🆔 ORDER \`#${orderId}\`\n` +
-                             `│ 📦 \`${pkgDisplay}\`\n` +
-                             `│ 💰 \`${selectedPkg.price} TK\`\n` +
-                             `│ 💳 \`${method.toUpperCase()}\`\n` +
-                             `╰──────────────────╯\n\n` +
-                             `╭──────────────────╮\n` +
-                             `│ 🔐 **CUSTOMER DATA**\n` +
-                             `╰──────────────────╯\n\n` +
-                             `> 👤 \`${name}\`\n` +
-                             `> 📧 \`${maskedEmail}\`\n` +
-                             `> 🔑 \`••••••••\`\n\n` +
-                             `📡 STATUS → 🟢 **DELIVERED**\n` +
-                             `📊 RATING → ${ratingStars} \`${ratingNum}\`\n\n` +
-                             `💬 **FEEDBACK RECEIVED**\n\n` +
-                             `> ${review}\n\n` +
-                             `> 🚀 **ADSPOWER SELLER BD**`;
+        // Escape variables
+        const orderIdEscaped = escapeMarkdownV2(orderId, true);
+        const nameEscaped = escapeMarkdownV2(name, true);
+        const reviewEscaped = escapeMarkdownV2(review, false);
+        const accountsCountEscaped = escapeMarkdownV2(accountsCount, true);
+        const priceEscaped = escapeMarkdownV2(selectedPkg.price, true);
+        const methodEscaped = escapeMarkdownV2(method.toUpperCase(), true);
+        const maskedEmailEscaped = escapeMarkdownV2(maskedEmail, true);
+        const ratingNumEscaped = escapeMarkdownV2(ratingNum, true);
 
-        await bot.telegram.sendMessage(parseInt(GROUP_ID), fakeSalesMsg, { parse_mode: 'Markdown' });
+        const fakeSalesMsg = `💎 *PREMIUM ORDER RECEIPT*\n\n` +
+                             `╔════════════════════════╗\n` +
+                             `      🛒 *ADSPOWER*\n` +
+                             `       \`ORDER #` + orderIdEscaped + `\`\n` +
+                             `╚════════════════════════╝\n\n` +
+                             `📦 *PACKAGE*\n` +
+                             `\`ADSPOWER × ` + accountsCountEscaped + `\`\n\n` +
+                             `💰 *TOTAL*\n` +
+                             `\`` + priceEscaped + ` TK\`\n\n` +
+                             `💳 *PAYMENT METHOD*\n` +
+                             `\`` + methodEscaped + `\`\n\n` +
+                             `━━━━━━━━━━━━━━━━━━━━\n\n` +
+                             `👤 *CUSTOMER*\n` +
+                             `\`` + nameEscaped + `\`\n\n` +
+                             `📧 *EMAIL*\n` +
+                             `\`` + maskedEmailEscaped + `\`\n\n` +
+                             `🔑 *PASSWORD*\n` +
+                             `\`••••••••\`\n\n` +
+                             `━━━━━━━━━━━━━━━━━━━━\n\n` +
+                             `🟢 *DELIVERED SUCCESSFULLY*\n\n` +
+                             `⭐️ *CUSTOMER RATING*\n` +
+                             ratingStars + ` \`` + ratingNumEscaped + ` / 5\`\n\n` +
+                             `💬 *CUSTOMER REVIEW*\n\n` +
+                             `> ` + reviewEscaped + `\n\n` +
+                             `👑 *ADSPOWER SELLER BD* 🚀`;
+
+        await bot.telegram.sendMessage(parseInt(GROUP_ID), fakeSalesMsg, { parse_mode: 'MarkdownV2' });
     } catch (err) {
         console.error("Error sending fake sale:", err.message);
     }
