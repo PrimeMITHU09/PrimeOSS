@@ -1,6 +1,129 @@
 require('dotenv').config();
-const { Telegraf, Markup } = require('telegraf');
+const { Telegraf, Markup, Telegram } = require('telegraf');
 const db = require('./db');
+
+// Robust Markdown-to-HTML converter for premium rendering in Telegram
+function mdToHtml(md) {
+    if (!md) return '';
+    let str = md.toString();
+
+    // 1. Escape HTML special characters
+    str = str.replace(/&/g, '&amp;')
+             .replace(/</g, '&lt;')
+             .replace(/>/g, '&gt;');
+
+    // 2. Stash code blocks (`...`) to prevent formatting inside them
+    const codeBlocks = [];
+    str = str.replace(/`(.*?)`/g, (match, code) => {
+        const placeholder = `___CODE_BLOCK_${codeBlocks.length}___`;
+        codeBlocks.push(code);
+        return placeholder;
+    });
+
+    // 3. Parse blockquotes (lines starting with &gt;)
+    let lines = str.split('\n');
+    let inBlockquote = false;
+    for (let i = 0; i < lines.length; i++) {
+        let line = lines[i];
+        let trimmed = line.trim();
+        if (trimmed.startsWith('&gt;')) {
+            let content = trimmed.substring(4);
+            if (content.startsWith(' ')) {
+                content = content.substring(1);
+            }
+            if (!inBlockquote) {
+                lines[i] = '<blockquote>' + content;
+                inBlockquote = true;
+            } else {
+                lines[i] = content;
+            }
+        } else {
+            if (inBlockquote) {
+                lines[i - 1] = lines[i - 1] + '</blockquote>';
+                inBlockquote = false;
+            }
+        }
+    }
+    if (inBlockquote) {
+        lines[lines.length - 1] = lines[lines.length - 1] + '</blockquote>';
+    }
+    str = lines.join('\n');
+
+    // 4. Bold: **text** and *text*
+    str = str.replace(/\*\*(.*?)\*\*/g, '<b>$1</b>');
+    str = str.replace(/\*(.*?)\*/g, '<b>$1</b>');
+
+    // 5. Italic: __text__ and _text_
+    str = str.replace(/__(.*?)__/g, '<i>$1</i>');
+    str = str.replace(/_(.*?)_/g, '<i>$1</i>');
+
+    // 6. Links: [text](url)
+    str = str.replace(/\[(.*?)\]\((.*?)\)/g, '<a href="$2">$1</a>');
+
+    // 7. Restore code blocks wrapped in <code>
+    codeBlocks.forEach((code, index) => {
+        str = str.replace(`___CODE_BLOCK_${index}___`, `<code>${code}</code>`);
+    });
+
+    return str;
+}
+
+// Hook into Telegraf Telegram methods to apply custom mdToHtml translation
+const originalSendMessage = Telegram.prototype.sendMessage;
+Telegram.prototype.sendMessage = function (chatId, text, extra) {
+    const cleanExtra = extra ? { ...extra } : {};
+    let processedText = text;
+    if (!cleanExtra.parse_mode || cleanExtra.parse_mode === 'Markdown') {
+        if (typeof text === 'string') {
+            processedText = mdToHtml(text);
+            cleanExtra.parse_mode = 'HTML';
+        }
+    }
+    return originalSendMessage.call(this, chatId, processedText, cleanExtra);
+};
+
+const originalEditMessageText = Telegram.prototype.editMessageText;
+Telegram.prototype.editMessageText = function (chatId, messageId, inlineMessageId, text, extra) {
+    const cleanExtra = extra ? { ...extra } : {};
+    let processedText = text;
+    if (!cleanExtra.parse_mode || cleanExtra.parse_mode === 'Markdown') {
+        if (typeof text === 'string') {
+            processedText = mdToHtml(text);
+            cleanExtra.parse_mode = 'HTML';
+        }
+    }
+    return originalEditMessageText.call(this, chatId, messageId, inlineMessageId, processedText, cleanExtra);
+};
+
+const originalSendPhoto = Telegram.prototype.sendPhoto;
+Telegram.prototype.sendPhoto = function (chatId, photo, extra) {
+    const cleanExtra = extra ? { ...extra } : {};
+    if (cleanExtra.caption && (!cleanExtra.parse_mode || cleanExtra.parse_mode === 'Markdown')) {
+        cleanExtra.caption = mdToHtml(cleanExtra.caption);
+        cleanExtra.parse_mode = 'HTML';
+    }
+    return originalSendPhoto.call(this, chatId, photo, cleanExtra);
+};
+
+const originalSendDocument = Telegram.prototype.sendDocument;
+Telegram.prototype.sendDocument = function (chatId, doc, extra) {
+    const cleanExtra = extra ? { ...extra } : {};
+    if (cleanExtra.caption && (!cleanExtra.parse_mode || cleanExtra.parse_mode === 'Markdown')) {
+        cleanExtra.caption = mdToHtml(cleanExtra.caption);
+        cleanExtra.parse_mode = 'HTML';
+    }
+    return originalSendDocument.call(this, chatId, doc, cleanExtra);
+};
+
+const originalSendVideo = Telegram.prototype.sendVideo;
+Telegram.prototype.sendVideo = function (chatId, video, extra) {
+    const cleanExtra = extra ? { ...extra } : {};
+    if (cleanExtra.caption && (!cleanExtra.parse_mode || cleanExtra.parse_mode === 'Markdown')) {
+        cleanExtra.caption = mdToHtml(cleanExtra.caption);
+        cleanExtra.parse_mode = 'HTML';
+    }
+    return originalSendVideo.call(this, chatId, video, cleanExtra);
+};
 
 const BOT_TOKEN = process.env.BOT_TOKEN || '8810183896:AAEtcbK-z19BkACmoUBTJiTYzvxCUVLHKzc';
 const ADMIN_ID = (process.env.ADMIN_ID || '1262396547').toString();
