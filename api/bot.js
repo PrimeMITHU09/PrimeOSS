@@ -2300,22 +2300,29 @@ bot.on(['text', 'photo'], async (ctx) => {
         const buyerName = ctx.from.first_name || 'User';
         const usernameStr = ctx.from.username ? ` (@${ctx.from.username})` : '';
 
+        // Escape variables for MarkdownV2 safety
+        const buyerNameEscaped = escapeMarkdownV2(buyerName, false);
+        const usernameStrEscaped = escapeMarkdownV2(usernameStr, false);
+        const userIdEscaped = escapeMarkdownV2(userId, true);
+        const ratingNumEscaped = escapeMarkdownV2(ratingNum, true);
+        const reviewTextEscaped = escapeMarkdownV2(reviewText, false);
+
         const feedbackMsg = `> ⭐️ *CUSTOMER FEEDBACK RECEIVED*\n` +
                             `╔════════════════════╗\n` +
-                            `  ***🗣️ SHOP REVIEW***\n` +
+                            `  *🗣️ SHOP REVIEW*\n` +
                             `╚════════════════════╝\n` +
                             `╭──────────────────╮\n` +
-                            `│ 👤 **Customer:** ${buyerName}${usernameStr}\n` +
-                            `│ 🆔 **User ID:** \`${userId}\`\n` +
-                            `│ 📊 **Rating:** ${ratingStars} \`${ratingNum}\`\n` +
+                            `│ 👤 *Customer:* ${buyerNameEscaped}${usernameStrEscaped}\n` +
+                            `│ 🆔 *User ID:* \`${userIdEscaped}\`\n` +
+                            `│ 📊 *Rating:* ${ratingStars} \`${ratingNumEscaped}\`\n` +
                             `╰──────────────────╯\n\n` +
-                            `***💬 FEEDBACK RECEIVED***\n\n` +
-                            `> ${reviewText}\n\n` +
-                            `> 🚀 **ADSPOWER SELLER BD**`;
+                            `*💬 FEEDBACK RECEIVED*\n\n` +
+                            `> ${reviewTextEscaped}\n\n` +
+                            `> 🚀 *ADSPOWER SELLER BD*`;
 
         try {
-            await ctx.telegram.sendMessage(ADMIN_ID, feedbackMsg, { parse_mode: 'Markdown' });
-            await ctx.telegram.sendMessage(GROUP_ID, feedbackMsg, { parse_mode: 'Markdown' });
+            await ctx.telegram.sendMessage(ADMIN_ID, feedbackMsg, { parse_mode: 'MarkdownV2' });
+            await ctx.telegram.sendMessage(GROUP_ID, feedbackMsg, { parse_mode: 'MarkdownV2' });
         } catch (e) {
             console.error("Failed to forward review feedback to admin/group:", e.message);
         }
