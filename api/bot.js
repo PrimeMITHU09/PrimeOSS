@@ -15,7 +15,7 @@ function mdToHtml(md) {
     // 2. Stash code blocks (`...`) to prevent formatting inside them
     const codeBlocks = [];
     str = str.replace(/`(.*?)`/g, (match, code) => {
-        const placeholder = `___CODE_BLOCK_${codeBlocks.length}___`;
+        const placeholder = `TEMPCODEBLOCK${codeBlocks.length}`;
         codeBlocks.push(code);
         return placeholder;
     });
@@ -62,7 +62,7 @@ function mdToHtml(md) {
 
     // 7. Restore code blocks wrapped in <code>
     codeBlocks.forEach((code, index) => {
-        str = str.replace(`___CODE_BLOCK_${index}___`, `<code>${code}</code>`);
+        str = str.replace(`TEMPCODEBLOCK${index}`, `<code>${code}</code>`);
     });
 
     return str;
