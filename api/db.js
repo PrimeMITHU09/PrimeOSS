@@ -422,6 +422,281 @@ async function getAllOrders() {
   }
 }
 
+// Ban Management Helpers (using coupon storage fallback for zero schema disruption)
+async function banUser(userId) {
+  if (!supabase) return true;
+  try {
+    await createCoupon(`BAN_USER|${userId}`, 0);
+    return true;
+  } catch (err) {
+    console.error('Supabase banUser error:', err.message);
+    return false;
+  }
+}
+
+async function unbanUser(userId) {
+  if (!supabase) return true;
+  try {
+    await deleteCoupon(`BAN_USER|${userId}`);
+    return true;
+  } catch (err) {
+    console.error('Supabase unbanUser error:', err.message);
+    return false;
+  }
+}
+
+async function isUserBanned(userId) {
+  if (!supabase) return false;
+  try {
+    const coupon = await getCoupon(`BAN_USER|${userId}`);
+    return !!coupon;
+  } catch (err) {
+    return false;
+  }
+}
+
+async function getAllBannedUsers() {
+  if (!supabase) return [];
+  try {
+    const coupons = await getAllCoupons();
+    if (!coupons) return [];
+    return coupons.filter(c => c.code.startsWith('BAN_USER|')).map(c => c.code.split('BAN_USER|')[1]);
+  } catch (err) {
+    return [];
+  }
+}
+
+// Balance Management Helpers
+async function getUserBalance(userId) {
+  if (!supabase) return 0;
+  try {
+    const coupons = await getAllCoupons();
+    if (!coupons) return 0;
+    const balCoupon = coupons.find(c => c.code.startsWith(`USER_BAL|${userId}|`));
+    if (!balCoupon) return 0;
+    const parts = balCoupon.code.split('|');
+    return parseInt(parts[2]) || 0;
+  } catch (err) {
+    return 0;
+  }
+}
+
+async function setUserBalance(userId, amount) {
+  if (!supabase) return true;
+  try {
+    const coupons = await getAllCoupons();
+    if (coupons) {
+      const oldBal = coupons.filter(c => c.code.startsWith(`USER_BAL|${userId}|`));
+      for (const old of oldBal) {
+        await deleteCoupon(old.code);
+      }
+    }
+    await createCoupon(`USER_BAL|${userId}|${amount}`, 0);
+    return true;
+  } catch (err) {
+    console.error('Supabase setUserBalance error:', err.message);
+    return false;
+  }
+}
+
+// Stock Pool Helpers
+let memoryStockPool = [];
+
+async function addStockAccount(accountData) {
+  const stockId = `${Date.now()}_${Math.floor(Math.random() * 1000)}`;
+  const code = `STOCK_ITEM|${stockId}|${accountData.trim()}`;
+  if (!supabase) {
+    memoryStockPool.push({ id: stockId, code, data: accountData.trim(), available: true });
+    return true;
+  }
+  try {
+    await createCoupon(code, 1); // 1 = Available
+    return true;
+  } catch (err) {
+    console.error('Supabase addStockAccount error:', err.message);
+    return false;
+  }
+}
+
+async function getAllStockAccounts() {
+  if (!supabase) {
+    return memoryStockPool.map(item => ({
+      id: item.id,
+      code: item.code,
+      data: item.data,
+      available: item.available
+    }));
+  }
+  try {
+    const coupons = await getAllCoupons();
+    if (!coupons) return [];
+    const stockCoupons = coupons.filter(c => c.code.startsWith('STOCK_ITEM|'));
+    return stockCoupons.map(c => {
+      const parts = c.code.split('|');
+      return {
+        id: parts[1],
+        code: c.code,
+        data: parts.slice(2).join('|'),
+        available: c.discount_amount === 1
+      };
+    });
+  } catch (err) {
+    console.error('Supabase getAllStockAccounts error:', err.message);
+    return [];
+  }
+}
+
+async function popStockAccount(assignedUserId) {
+  if (!supabase) {
+    const availableIndex = memoryStockPool.findIndex(item => item.available);
+    if (availableIndex === -1) return null;
+    memoryStockPool[availableIndex].available = false;
+    memoryStockPool[availableIndex].assignedTo = assignedUserId;
+    return memoryStockPool[availableIndex].data;
+  }
+  try {
+    const allStock = await getAllStockAccounts();
+    const available = allStock.find(item => item.available);
+    if (!available) return null;
+
+    // Mark as used/reserved by updating discount_amount to 0
+    await deleteCoupon(available.code);
+    const reservedCode = `STOCK_USED|${available.id}|${assignedUserId}|${available.data}`;
+    await createCoupon(reservedCode, 0);
+
+    return available.data;
+  } catch (err) {
+    console.error('Supabase popStockAccount error:', err.message);
+    return null;
+  }
+}
+
+// System Allow Custom Email Helper
+let memoryAllowCustomEmail = true;
+
+async function getAllowCustomEmailStatus() {
+  if (!supabase) return memoryAllowCustomEmail;
+  try {
+    const coupon = await getCoupon('SYSTEM_ALLOW_CUSTOM_EMAIL');
+    if (coupon) {
+      return coupon.discount_amount === 1;
+    }
+    return true; // default enabled
+  } catch (err) {
+    return true;
+  }
+}
+
+async function setAllowCustomEmailStatus(enabled) {
+  const val = enabled ? 1 : 0;
+  if (!supabase) {
+    memoryAllowCustomEmail = enabled;
+    return true;
+  }
+  try {
+    await createCoupon('SYSTEM_ALLOW_CUSTOM_EMAIL', val);
+    return true;
+  } catch (err) {
+    console.error('Supabase setAllowCustomEmailStatus error:', err.message);
+    return false;
+  }
+}
+
+async function popSpecificStockAccount(stockId, assignedUserId) {
+  if (!supabase) {
+    const item = memoryStockPool.find(i => i.id === stockId && i.available);
+    if (!item) return null;
+    item.available = false;
+    item.assignedTo = assignedUserId;
+    return item.data;
+  }
+  try {
+    const allStock = await getAllStockAccounts();
+    const target = allStock.find(item => item.id === stockId && item.available);
+    if (!target) return null;
+
+    await deleteCoupon(target.code);
+    const reservedCode = `STOCK_USED|${target.id}|${assignedUserId}|${target.data}`;
+    await createCoupon(reservedCode, 0);
+
+    return target.data;
+  } catch (err) {
+    console.error('Supabase popSpecificStockAccount error:', err.message);
+    return null;
+  }
+}
+
+async function deleteStockAccount(code) {
+  if (!supabase) {
+    memoryStockPool = memoryStockPool.filter(i => i.code !== code);
+    return true;
+  }
+  return await deleteCoupon(code);
+}
+
+async function getTopVIPBuyers() {
+  try {
+    let orders = [];
+    if (supabase) {
+      orders = await getAllOrders() || [];
+    }
+    const completed = orders.filter(o => o.status === 'Completed');
+    const userStats = {};
+
+    completed.forEach(ord => {
+      const uid = ord.user_id;
+      if (!userStats[uid]) {
+        userStats[uid] = {
+          userId: uid,
+          name: ord.name || 'User',
+          username: ord.username || 'N/A',
+          count: 0,
+          totalSpent: 0
+        };
+      }
+      userStats[uid].count += 1;
+      userStats[uid].totalSpent += parseInt(ord.price_paid || ord.pricePaid || 30);
+    });
+
+    const list = Object.values(userStats);
+    list.sort((a, b) => b.totalSpent - a.totalSpent);
+    return list.slice(0, 10);
+  } catch (err) {
+    console.error('getTopVIPBuyers error:', err.message);
+    return [];
+  }
+}
+
+async function getFullDatabaseBackupData() {
+  try {
+    let users = [];
+    let orders = [];
+    let coupons = [];
+    let stock = [];
+
+    if (supabase) {
+      users = (await getAllUsers()) || [];
+      orders = (await getAllOrders()) || [];
+      coupons = (await getAllCoupons()) || [];
+      stock = (await getAllStockAccounts()) || [];
+    }
+
+    return {
+      exportedAt: new Date().toISOString(),
+      system: "AdsPower Seller BD Bot",
+      totalUsersCount: users.length,
+      totalOrdersCount: orders.length,
+      users,
+      orders,
+      coupons,
+      stockPool: stock
+    };
+  } catch (err) {
+    console.error('getFullDatabaseBackupData error:', err.message);
+    return { exportedAt: new Date().toISOString(), error: err.message };
+  }
+}
+
 module.exports = {
   isConfigured,
   saveUser,
@@ -446,5 +721,24 @@ module.exports = {
   clearAdminSession,
   getCompletedOrders,
   checkIfProofExists,
-  getAllOrders
+  getAllOrders,
+  banUser,
+  unbanUser,
+  isUserBanned,
+  getAllBannedUsers,
+  getUserBalance,
+  setUserBalance,
+  addStockAccount,
+  getAllStockAccounts,
+  popStockAccount,
+  popSpecificStockAccount,
+  deleteStockAccount,
+  getAllowCustomEmailStatus,
+  setAllowCustomEmailStatus,
+  getTopVIPBuyers,
+  getFullDatabaseBackupData
 };
+
+
+
+

@@ -65,6 +65,11 @@ function mdToHtml(md) {
         str = str.replace(`TEMPCODEBLOCK${index}`, `<code>${code}</code>`);
     });
 
+    // 8. Restore Telegram Premium Custom Emoji tags (<tg-emoji>)
+    str = str.replace(/&lt;tg-emoji emoji-id=&quot;(.*?)&quot;&gt;(.*?)&lt;\/tg-emoji&gt;/gi, '<tg-emoji emoji-id="$1">$2</tg-emoji>');
+    str = str.replace(/&lt;tg-emoji emoji-id="(.*?)"&gt;(.*?)&lt;\/tg-emoji&gt;/gi, '<tg-emoji emoji-id="$1">$2</tg-emoji>');
+    str = str.replace(/&lt;tg-emoji emoji-id='(.*?)'&gt;(.*?)&lt;\/tg-emoji&gt;/gi, '<tg-emoji emoji-id="$1">$2</tg-emoji>');
+
     return str;
 }
 
@@ -364,6 +369,23 @@ async function setWallet(type, value) {
     } else {
         memoryWallets[type] = value;
     }
+}
+
+async function getCustomText(key, defaultVal) {
+    const val = await getWallet(`TEXT_${key.toUpperCase()}`);
+    return (val && !['01864339154', '955102483', 'mithuchandra647@gmail.com'].includes(val)) ? val : defaultVal;
+}
+
+async function setCustomText(key, value) {
+    await setWallet(`TEXT_${key.toUpperCase()}`, value);
+}
+
+async function getItemEmojiTag(itemKey, defaultFallback = '⭐') {
+    const emojiId = await getCustomText(`EMOJIID_${itemKey}`, '');
+    if (emojiId && emojiId.trim().length > 5 && !emojiId.includes('সরি') && !emojiId.includes('ডিফল্ট')) {
+        return `<tg-emoji emoji-id="${emojiId.trim()}">${defaultFallback}</tg-emoji>`;
+    }
+    return defaultFallback;
 }
 
 // Referral Systems Config & Helpers
@@ -973,20 +995,33 @@ async function getUserIdsForBroadcast() {
 }
 
 // Reusable menu component with FAQ integrated
-function getMainMenu(userName) {
+async function getMainMenu(userName) {
+    const defaultText = `👋 *স্বাগতম {name}! আমাদের শপে আপনাকে অভিনন্দন!* \n\n> 🔒 *Unlock Ultimate Multi-Accounting Security & Speed!*\n\n📌 অনুগ্রহ করে নিচের বাটনগুলো থেকে আপনার প্রয়োজনীয় অপশনটি সিলেক্ট করুন:`;
+    const customMsg = await getCustomText('MSG_WELCOME', defaultText);
+    const welcomeEmojiTag = await getItemEmojiTag('WELCOME', '💎');
+    
+    let msgContent = customMsg.includes('{name}') ? customMsg.replace('{name}', userName) : customMsg;
+    const text = `${welcomeEmojiTag} *AdsPower Seller BD* ${welcomeEmojiTag}\n\n${msgContent}`;
+
+    const detailsLabel = await getCustomText('LABEL_DETAILS', 'AdsPower Details');
+    const buyLabel = await getCustomText('LABEL_BUY_NOW', 'Buy Now');
+    const profileLabel = await getCustomText('LABEL_PROFILE', 'My Profile');
+    const orderLabel = await getCustomText('LABEL_MY_ORDER', 'My Order');
+    const noticeLabel = await getCustomText('LABEL_NOTICE', 'Offers & Notice');
+    const faqLabel = await getCustomText('LABEL_FAQ', 'FAQ & Help Guide');
+    const leaderLabel = await getCustomText('LABEL_LEADERBOARD', 'Leaderboard');
+    const supportLabel = await getCustomText('LABEL_SUPPORT', 'Contact Support');
+
     return {
-        text: `⭐️ *AdsPower Seller BD* ⭐️\n\n` +
-              `👋 *স্বাগতম ${userName}! আমাদের শপে আপনাকে অভিনন্দন!* \n\n` +
-              `> 🔒 *Unlock Ultimate Multi-Accounting Security & Speed!*\n\n` +
-              `📌 অনুগ্রহ করে নিচের বাটনগুলো থেকে আপনার প্রয়োজনীয় অপশনটি সিলেক্ট করুন:`,
+        text: text,
         extra: {
             parse_mode: 'Markdown',
             ...Markup.inlineKeyboard([
-                [Markup.button.callback('📦 AdsPower Details', 'details')],
-                [Markup.button.callback('🛒 Buy Now', 'buy_options')],
-                [Markup.button.callback('👤 My Profile', 'profile'), Markup.button.callback('🛍 My Order', 'my_order')],
-                [Markup.button.callback('📢 Offers & Notice', 'notice_board'), Markup.button.callback('❓ FAQ & Help Guide', 'faq_menu')],
-                [Markup.button.callback('🏆 Leaderboard', 'leaderboard'), Markup.button.callback('📞 Contact Support', 'support')]
+                [Markup.button.callback(`📦 ${detailsLabel}`, 'details')],
+                [Markup.button.callback(`🛒 ${buyLabel}`, 'buy_options')],
+                [Markup.button.callback(`👤 ${profileLabel}`, 'profile'), Markup.button.callback(`🛍 ${orderLabel}`, 'my_order')],
+                [Markup.button.callback(`📢 ${noticeLabel}`, 'notice_board'), Markup.button.callback(`❓ ${faqLabel}`, 'faq_menu')],
+                [Markup.button.callback(`🏆 ${leaderLabel}`, 'leaderboard'), Markup.button.callback(`📞 ${supportLabel}`, 'support')]
             ])
         }
     };
@@ -999,10 +1034,21 @@ const adminReplyKeyboard = Markup.keyboard([
     ['👑 Close Admin Panel 👑']
 ]).resize();
 
-// Force Join Verification Middleware
+// Force Join & Ban Verification Middleware
 bot.use(async (ctx, next) => {
     const userId = ctx.from ? ctx.from.id.toString() : null;
     if (!userId || userId === ADMIN_ID) return next();
+
+    // Check if user is banned
+    const isBanned = await db.isUserBanned(userId);
+    if (isBanned) {
+        const banMsg = "⛔ *আপনার অ্যাকাউন্টটি এডমিন কর্তৃক স্থগিত/ব্যান করা হয়েছে।*\n\nসহায়তার জন্য এডমিনের সাথে যোগাযোগ করুন।";
+        if (ctx.callbackQuery) {
+            return ctx.answerCbQuery("আপনার অ্যাকাউন্টটি স্থগিত/ব্যান করা হয়েছে!", { show_alert: true });
+        } else {
+            return ctx.reply(banMsg, { parse_mode: 'Markdown' });
+        }
+    }
 
     // Skip checks for verifying join
     if (ctx.callbackQuery && ctx.callbackQuery.data === 'verify_join') {
@@ -1086,7 +1132,7 @@ bot.start(async (ctx) => {
     await updateUserSession(userId, { waitingFor: null, tempRating: null });
     await checkAndSendNotice(ctx);
     const userName = ctx.from.first_name || "User";
-    const menu = getMainMenu(userName);
+    const menu = await getMainMenu(userName);
     if (referredByMsg) {
         await ctx.reply(referredByMsg, { parse_mode: 'Markdown' });
     }
@@ -1097,7 +1143,7 @@ bot.start(async (ctx) => {
 bot.action('main_menu', async (ctx) => {
     await ctx.answerCbQuery();
     const userName = ctx.from.first_name || "User";
-    const menu = getMainMenu(userName);
+    const menu = await getMainMenu(userName);
     try {
         await ctx.editMessageText(menu.text, menu.extra);
     } catch (e) {
@@ -1213,7 +1259,18 @@ async function showPaymentSelectionScreen(ctx, userId) {
         couponInfo = `🎟️ *Applied Coupon:* \`${session.appliedCoupon}\` (-${discount} TK)\n`;
     }
 
-    const buyText = `🛒 *Checkout Summary* 🛒\n` +
+    const buyNowEmojiTag = await getItemEmojiTag('BUY_NOW', '🛒');
+    const bkashLabel = await getCustomText('LABEL_BKASH', 'bKash');
+    const nagadLabel = await getCustomText('LABEL_NAGAD', 'Nagad');
+    const binanceLabel = await getCustomText('LABEL_BINANCE', 'Binance (USDT)');
+    const payoneerLabel = await getCustomText('LABEL_PAYONEER', 'Payoneer');
+
+    const bkashEmojiTag = await getItemEmojiTag('BKASH', '🌸');
+    const nagadEmojiTag = await getItemEmojiTag('NAGAD', '🍑');
+    const binanceEmojiTag = await getItemEmojiTag('BINANCE', '🟡');
+    const payoneerEmojiTag = await getItemEmojiTag('PAYONEER', '🔷');
+
+    const buyText = `${buyNowEmojiTag} *Checkout Summary* ${buyNowEmojiTag}\n` +
                     `━━━━━━━━━━━━━━━━━━\n` +
                     `📦 *Package:* \`${session.packageName}\` (${price} TK)\n` +
                     couponInfo +
@@ -1224,8 +1281,8 @@ async function showPaymentSelectionScreen(ctx, userId) {
     const buyExtra = {
         parse_mode: 'Markdown',
         ...Markup.inlineKeyboard([
-            [Markup.button.callback('🇧🇩 bKash', 'pay_bkash'), Markup.button.callback('🇧🇩 Nagad', 'pay_nagad')],
-            [Markup.button.callback('🌐 Binance (USDT)', 'pay_binance'), Markup.button.callback('🌐 Payoneer', 'pay_payoneer')],
+            [Markup.button.callback(`🇧🇩 ${bkashLabel}`, 'pay_bkash'), Markup.button.callback(`🇧🇩 ${nagadLabel}`, 'pay_nagad')],
+            [Markup.button.callback(`🌐 ${binanceLabel}`, 'pay_binance'), Markup.button.callback(`🌐 ${payoneerLabel}`, 'pay_payoneer')],
             [Markup.button.callback('🎟️ Apply Coupon Code', 'apply_coupon_prompt')],
             [Markup.button.callback('⬅️ Back', 'buy_options')]
         ])
@@ -1255,7 +1312,42 @@ bot.action(/^pkg_(\d+)_(\d+)$/, async (ctx) => {
     
     // Save package selection in user session
     await updateUserSession(userId, { packageName, price: parseInt(price), appliedCoupon: '', discount: 0 });
+
+    const isCustomEmailAllowed = await db.getAllowCustomEmailStatus();
+    if (!isCustomEmailAllowed) {
+        await updateUserSession(userId, { customEmail: 'Stock Account' });
+        return showPaymentSelectionScreen(ctx, userId);
+    }
+
+    return ctx.reply(
+        "📦 *অ্যাকাউন্ট টাইপ সিলেক্ট করুন / Select Account Mode:* \n" +
+        "━━━━━━━━━━━━━━━━━━\n\n" +
+        "> 1. **Get Account from Stock:** আমাদের তৈরি করা রেডিমেড স্টক থেকে ইন্সট্যান্ট অ্যাকাউন্ট পাবেন।\n" +
+        "> 2. **Provide My Own Email:** আপনার নিজের জিমেইল/ইমেইলে ১০ দিনের প্রিমিয়াম সুবিধা একটিভ করে নিবেন।\n\n" +
+        "👇 নিচের বাটন থেকে আপনার সুবিধাজনক অপশনটি বেছে নিন:",
+        {
+            parse_mode: 'Markdown',
+            ...Markup.inlineKeyboard([
+                [Markup.button.callback('📦 Get Account from Stock Pool', 'choose_account_stock')],
+                [Markup.button.callback('📧 Provide My Own Email', 'choose_account_own_email')],
+                [Markup.button.callback('⬅️ Back to Menu', 'buy_options')]
+            ])
+        }
+    );
+});
+
+bot.action('choose_account_stock', async (ctx) => {
+    await ctx.answerCbQuery();
+    const userId = ctx.from.id.toString();
+    await updateUserSession(userId, { customEmail: 'Stock Account' });
     return showPaymentSelectionScreen(ctx, userId);
+});
+
+bot.action('choose_account_own_email', async (ctx) => {
+    await ctx.answerCbQuery();
+    const userId = ctx.from.id.toString();
+    await updateUserSession(userId, { waitingFor: 'user_custom_email_input' });
+    return ctx.reply("📧 অনুগ্রহ করে আপনার ইমেইল এড্রেসটি লিখে পাঠান (যেটিতে AdsPower প্রিমিয়াম সেটআপ পাবেন):");
 });
 
 // Callback to trigger Coupon Input prompt
@@ -1508,7 +1600,7 @@ bot.action('verify_join', async (ctx) => {
         await ctx.answerCbQuery("সফলভাবে ভেরিফাই হয়েছে! ❤️", { show_alert: true });
         try { await ctx.deleteMessage(); } catch(e) {}
         const userName = ctx.from.first_name || "User";
-        const menu = getMainMenu(userName);
+        const menu = await getMainMenu(userName);
         return ctx.reply(menu.text, menu.extra);
     } else {
         return ctx.answerCbQuery("❌ আপনি এখনো গ্রুপে জয়েন করেননি! অনুগ্রহ করে জয়েন করে আবার ট্রাই করুন।", { show_alert: true });
@@ -1517,9 +1609,10 @@ bot.action('verify_join', async (ctx) => {
 
 bot.action('support', async (ctx) => {
     await ctx.answerCbQuery();
+    const supportUser = await getCustomText('SUPPORT_USER', '@prime8088');
     const supportText = `📞 *Contact Support / সাহায্য কেন্দ্র* 📞\n` +
                         `━━━━━━━━━━━━━━━━━━\n` +
-                        `> 👨‍💻 *Admin Username:* @prime8088\n` +
+                        `> 👨‍💻 *Admin Username:* ${supportUser}\n` +
                         `> 📲 *WhatsApp:* \`01864339154\`\n\n` +
                         `💬 যেকোনো ধরনের সমস্যা বা সাহায্যের জন্য সরাসরি এডমিনের সাথে যোগাযোগ করুন। অথবা সরাসরি নিচের বাটনটি ব্যবহার করে বটে মেসেজ পাঠান।`;
     return ctx.reply(supportText, {
@@ -1652,9 +1745,10 @@ bot.action('pay_bkash', async (ctx) => {
     await updateUserSession(userId, { method: 'bKash' });
     const finalPrice = Math.max(0, session.price - session.discount);
     const bkashNum = await getWallet('bkash');
+    const bkashEmojiTag = await getItemEmojiTag('BKASH', '🌸');
     
     return ctx.reply(
-        `💎 *bKash Payment Details* 💎\n` +
+        `${bkashEmojiTag} *bKash Payment Details* ${bkashEmojiTag}\n` +
         `━━━━━━━━━━━━━━━━━━\n` +
         `📞 *Send Money Number:* \`${bkashNum}\` (Personal)\n` +
         `📦 *Selected Package:* \`${session.packageName}\`\n` +
@@ -1679,9 +1773,10 @@ bot.action('pay_nagad', async (ctx) => {
     await updateUserSession(userId, { method: 'Nagad' });
     const finalPrice = Math.max(0, session.price - session.discount);
     const nagadNum = await getWallet('nagad');
+    const nagadEmojiTag = await getItemEmojiTag('NAGAD', '🍑');
     
     return ctx.reply(
-        `💎 *Nagad Payment Details* 💎\n` +
+        `${nagadEmojiTag} *Nagad Payment Details* ${nagadEmojiTag}\n` +
         `━━━━━━━━━━━━━━━━━━\n` +
         `📞 *Send Money Number:* \`${nagadNum}\` (Personal)\n` +
         `📦 *Selected Package:* \`${session.packageName}\`\n` +
@@ -1706,9 +1801,10 @@ bot.action('pay_binance', async (ctx) => {
     await updateUserSession(userId, { method: 'Binance' });
     const finalPrice = Math.max(0, session.price - session.discount);
     const binanceId = await getWallet('binance');
+    const binanceEmojiTag = await getItemEmojiTag('BINANCE', '🟡');
     
     return ctx.reply(
-        `💎 *Binance Payment Details* 💎\n` +
+        `${binanceEmojiTag} *Binance Payment Details* ${binanceEmojiTag}\n` +
         `━━━━━━━━━━━━━━━━━━\n` +
         `📌 *Pay ID:* \`${binanceId}\`\n` +
         `📦 *Selected Package:* \`${session.packageName}\`\n` +
@@ -1733,9 +1829,10 @@ bot.action('pay_payoneer', async (ctx) => {
     await updateUserSession(userId, { method: 'Payoneer' });
     const finalPrice = Math.max(0, session.price - session.discount);
     const payoneerEmail = await getWallet('payoneer');
+    const payoneerEmojiTag = await getItemEmojiTag('PAYONEER', '🔷');
     
     return ctx.reply(
-        `💎 *Payoneer Payment Details* 💎\n` +
+        `${payoneerEmojiTag} *Payoneer Payment Details* ${payoneerEmojiTag}\n` +
         `━━━━━━━━━━━━━━━━━━\n` +
         `📧 *Email:* \`${payoneerEmail}\`\n` +
         `📦 *Selected Package:* \`${session.packageName}\`\n` +
@@ -1774,6 +1871,92 @@ bot.action('input_payoneer_details', async (ctx) => {
     return ctx.reply("আপনার Payoneer Email এবং Customer ID লিখে পাঠান:");
 });
 
+async function checkLowStockAlert(ctx) {
+    try {
+        const allStock = await db.getAllStockAccounts();
+        const availableCount = allStock.filter(i => i.available).length;
+        if (availableCount <= 3) {
+            const alertMsg = `⚠️ *LOW STOCK WARNING ALERT!* ⚠️\n` +
+                             `━━━━━━━━━━━━━━━━━━\n` +
+                             `স্টকে বর্তমানে মাত্র *${availableCount}* টি অব্যবহৃত AdsPower অ্যাকাউন্ট বাকি আছে!\n\n` +
+                             `👉 কাস্টমারদের অর্ডারের নিরবচ্ছিন্ন সেবার জন্য অনুগ্রহ করে দ্রুত স্টক রিফিল করুন।`;
+            await ctx.telegram.sendMessage(ADMIN_ID, alertMsg, {
+                parse_mode: 'Markdown',
+                ...Markup.inlineKeyboard([[Markup.button.callback('➕ Add Accounts to Stock', 'add_stock_prompt')]])
+            });
+        }
+    } catch (e) {
+        console.error("Low stock alert error:", e.message);
+    }
+}
+
+async function showAdminManagementMenu(ctx) {
+    if (!isAdmin(ctx)) {
+        if (ctx.callbackQuery) return ctx.answerCbQuery("Unauthorized!", { show_alert: true });
+        return;
+    }
+
+    const msgText = `🎛️ *Golden Admin Control Panel*\n\n` +
+                    `শুধুমাত্র এডমিন আইডি দিয়ে অ্যাক্সেসযোগ্য। নিচের বাটনগুলো দিয়ে বটের অর্ডারিং, স্ট্যাটাস, ইউজার ব্যান/আনব্যান, ব্যালেন্স এবং কাস্টমাইজেশন নিয়ন্ত্রণ করুন:`;
+
+    const inlineKeyboard = Markup.inlineKeyboard([
+        [
+            Markup.button.callback('🔍 SEARCH ORDER / USER', 'admin_search_prompt'),
+            Markup.button.callback('👑 TOP VIP BUYERS', 'admin_top_vip_buyers')
+        ],
+        [
+            Markup.button.callback('💾 FULL DB BACKUP (JSON)', 'admin_full_db_backup')
+        ],
+        [
+            Markup.button.callback('📈 TODAY ALL STATUS', 'admin_today_status'),
+            Markup.button.callback('👤 USER STATUS CHECK', 'admin_user_status')
+        ],
+        [
+            Markup.button.callback('📡 UPDATE JOINS', 'admin_update_joins'),
+            Markup.button.callback('🛰️ LIVE SERVICES', 'admin_live_services')
+        ],
+        [
+            Markup.button.callback('📝 CUSTOMIZE TEXTS & BUTTONS', 'admin_customize_texts')
+        ],
+        [
+            Markup.button.callback('⛔ BAN USER', 'admin_ban_user'),
+            Markup.button.callback('🔓 UNBAN USER', 'admin_unban_user')
+        ],
+        [
+            Markup.button.callback('📜 BAN USER LIST', 'admin_ban_list')
+        ],
+        [
+            Markup.button.callback('➖ REMOVE BALANCE', 'admin_remove_balance'),
+            Markup.button.callback('➕ ADD BALANCE', 'admin_add_balance')
+        ],
+        [
+            Markup.button.callback('📥 PENDING ORDERS', 'admin_pending_orders'),
+            Markup.button.callback('👥 TOTAL BOT USERS', 'admin_total_users')
+        ],
+        [
+            Markup.button.callback('📢 BROADCAST', 'admin_broadcast_prompt'),
+            Markup.button.callback('🎟️ COUPONS', 'admin_coupons_menu')
+        ],
+        [
+            Markup.button.callback('📊 SALES REPORT', 'admin_sales_report'),
+            Markup.button.callback('⚙️ BOT CONTROL', 'bot_control_back')
+        ],
+        [
+            Markup.button.callback('❌ CLOSE ADMIN PANEL', 'admin_close')
+        ]
+    ]);
+
+    if (ctx.callbackQuery) {
+        try {
+            await ctx.editMessageText(msgText, { parse_mode: 'Markdown', ...inlineKeyboard });
+        } catch(e) {
+            await ctx.reply(msgText, { parse_mode: 'Markdown', ...inlineKeyboard });
+        }
+    } else {
+        await ctx.reply(msgText, { parse_mode: 'Markdown', ...inlineKeyboard });
+    }
+}
+
 async function showBotControlPanel(ctx) {
     const isMaintenance = await getMaintenanceMode();
     const isNoticeEnabled = await getNoticeStatus();
@@ -1783,11 +1966,14 @@ async function showBotControlPanel(ctx) {
     const isSellingHoursEnabled = await getSellingHoursStatus();
     const referRewardAmount = await getReferRewardAmount();
 
+    const isAllowCustomEmail = await db.getAllowCustomEmailStatus();
+
     const botStatusText = isMaintenance ? '🔴 **OFF (Maintenance Mode is ON)**' : '🟢 **ON (Normal Mode is ON)**';
     const noticeStatusText = isNoticeEnabled ? '🟢 **ENABLED (Active)**' : '🔴 **DISABLED (Inactive)**';
     const fakeSalesStatusText = isFakeSalesEnabled ? '🟢 **ENABLED (Sending Fake Sales)**' : '🔴 **DISABLED (Stopped)**';
     const forceJoinStatusText = isForceJoinEnabled ? '🟢 **ENABLED (Force Join is ON)**' : '🔴 **DISABLED (Everyone can access)**';
     const sellingHoursStatusText = isSellingHoursEnabled ? '🟢 **ENABLED (Selling limits: 11am-11pm)**' : '🔴 **DISABLED (24-Hour Selling is ON)**';
+    const emailChoiceStatusText = isAllowCustomEmail ? '🟢 **ENABLED (User can choose Stock vs Own Email)**' : '🔴 **DISABLED (Stock Only Mode)**';
 
     const bkashNum = await getWallet('bkash');
     const nagadNum = await getWallet('nagad');
@@ -1800,6 +1986,7 @@ async function showBotControlPanel(ctx) {
                      `• **Fake Sales Loop:** ${fakeSalesStatusText}\n` +
                      `• **Force Group Join:** ${forceJoinStatusText}\n` +
                      `• **Selling Time Limit:** ${sellingHoursStatusText}\n` +
+                     `• **User Email Choice:** ${emailChoiceStatusText}\n` +
                      `• **Refer Reward Amount:** \`${referRewardAmount} TK\`\n\n` +
                      `📢 **Notice Text:**\n` +
                      `> ${noticeText}\n\n` +
@@ -1811,6 +1998,9 @@ async function showBotControlPanel(ctx) {
                      `নিচের বাটনগুলো ক্লিক করে কন্ট্রোল করুন:`;
 
     const inlineKeyboard = Markup.inlineKeyboard([
+        [
+            Markup.button.callback('🎛️ Advanced Admin Management Panel', 'open_admin_mgmt_menu')
+        ],
         [
             Markup.button.callback(isMaintenance ? '🟢 Turn Bot ON' : '🔴 Turn Bot OFF (Maintenance)', 'maintenance_toggle'),
         ],
@@ -1827,8 +2017,11 @@ async function showBotControlPanel(ctx) {
             Markup.button.callback(isSellingHoursEnabled ? '🔕 Disable Time Limits (24h)' : '🔔 Enable Time Limits (11am-11pm)', 'selling_hours_toggle')
         ],
         [
-            Markup.button.callback('💰 Edit Refer Bonus', 'edit_refer_reward'),
-            Markup.button.callback('📦 Manage Stock', 'stock_menu')
+            Markup.button.callback(isAllowCustomEmail ? '🟢 Email Choice: ON' : '🔴 Email Choice: OFF (Stock)', 'toggle_allow_custom_email'),
+            Markup.button.callback('💰 Edit Refer Bonus', 'edit_refer_reward')
+        ],
+        [
+            Markup.button.callback('📦 Manage Stock Pool', 'stock_menu')
         ]
     ]);
 
@@ -1840,6 +2033,183 @@ async function showBotControlPanel(ctx) {
         await ctx.reply(panelMsg, { parse_mode: 'Markdown', ...inlineKeyboard });
     }
 }
+
+bot.action('stock_menu', async (ctx) => {
+    if (!isAdmin(ctx)) return ctx.answerCbQuery("Unauthorized!", { show_alert: true });
+    await ctx.answerCbQuery();
+
+    const allStock = await db.getAllStockAccounts();
+    const availableCount = allStock.filter(i => i.available).length;
+    const usedCount = allStock.filter(i => !i.available).length;
+
+    const stockText = `📦 *AdsPower ID Stock Pool Manager* 📦\n` +
+                      `━━━━━━━━━━━━━━━━━━\n` +
+                      `• **Available Stock (অব্যবহৃত):** *${availableCount}* টি\n` +
+                      `• **Reserved / Delivered:** *${usedCount}* টি\n` +
+                      `• **Total Stock Items:** *${allStock.length}* টি\n` +
+                      `━━━━━━━━━━━━━━━━━━\n\n` +
+                      `এডমিন স্টক পুলে একাধিক AdsPower আইডি/ইমেইল একসাথে জমা করে রাখতে পারেন। পেমেন্ট কনফার্মেশনের সময় এখান থেকে অটো আইডি রিজার্ভ হবে।`;
+
+    return ctx.editMessageText(stockText, {
+        parse_mode: 'Markdown',
+        ...Markup.inlineKeyboard([
+            [Markup.button.callback('➕ Add Accounts to Stock', 'add_stock_prompt')],
+            [Markup.button.callback('📋 View Available Stock', 'view_stock_accounts')],
+            [Markup.button.callback('🗑 Clear Available Stock', 'clear_stock_prompt')],
+            [Markup.button.callback('⬅️ Back to Control Panel', 'bot_control_back')]
+        ])
+    });
+});
+
+bot.action('add_stock_prompt', async (ctx) => {
+    if (!isAdmin(ctx)) return ctx.answerCbQuery("Unauthorized!", { show_alert: true });
+    await ctx.answerCbQuery();
+    const adminId = ctx.from.id.toString();
+    await updateAdminSession(adminId, { step: 'waiting_for_stock_bulk_add' });
+
+    return ctx.reply(
+        "📦 *AdsPower স্টক অ্যাকাউন্ট যুক্ত করুন:*\n\n" +
+        "এক সাথে এক বা একাধিক AdsPower আইডি/ইমেইল চ্যাটে মেসেজ আকারে **অথবা একটি `.txt` ফাইল আপলোড করে** পাঠান (প্রতি লাইনে একটি করে):\n\n" +
+        "**উদাহরণ:**\n" +
+        "`email1@gmail.com:pass123`\n" +
+        "`email2@gmail.com:pass456`",
+        { parse_mode: 'Markdown' }
+    );
+});
+
+bot.action('view_stock_accounts', async (ctx) => {
+    if (!isAdmin(ctx)) return ctx.answerCbQuery("Unauthorized!", { show_alert: true });
+    await ctx.answerCbQuery();
+
+    const allStock = await db.getAllStockAccounts();
+    const available = allStock.filter(i => i.available);
+
+    if (available.length === 0) {
+        return ctx.reply("📦 *Stock Status:* বর্তমানে কোনো অব্যবহৃত স্টক খালি নেই।", { parse_mode: 'Markdown' });
+    }
+
+    const previewLimit = 25;
+    const previewList = available.slice(0, previewLimit);
+
+    let text = `📦 *Available Stock Accounts (Total: ${available.length} টি)* 📦\n` +
+               `━━━━━━━━━━━━━━━━━━\n` +
+               (available.length > previewLimit ? `*(প্রথম ${previewLimit} টি প্রদর্শন করা হলো, বাকিগুলো দেখতে নিচে .txt ডাউনলোড বাটন ব্যবহার করুন)*\n\n` : `\n`);
+
+    previewList.forEach((item, index) => {
+        text += `${index + 1}. \`${item.data}\`\n`;
+    });
+
+    return ctx.reply(text, {
+        parse_mode: 'Markdown',
+        ...Markup.inlineKeyboard([
+            [Markup.button.callback('📥 Download Full Stock List (.txt)', 'download_stock_txt')],
+            [Markup.button.callback('⬅️ Back to Stock Manager', 'stock_menu')]
+        ])
+    });
+});
+
+bot.action('download_stock_txt', async (ctx) => {
+    if (!isAdmin(ctx)) return ctx.answerCbQuery("Unauthorized!", { show_alert: true });
+    await ctx.answerCbQuery("Generating stock file...");
+
+    const allStock = await db.getAllStockAccounts();
+    const available = allStock.filter(i => i.available);
+
+    if (available.length === 0) {
+        return ctx.reply("❌ ডাউনলোডের জন্য কোনো অব্যবহৃত স্টক খালি নেই।");
+    }
+
+    let fileContent = available.map(i => i.data).join('\n');
+    const buffer = Buffer.from(fileContent, 'utf-8');
+
+    return await ctx.replyWithDocument(
+        { source: buffer, filename: `available_stock_${available.length}_items.txt` },
+        { caption: `📦 *AdsPower Available Stock Backup (${available.length} items)*`, parse_mode: 'Markdown' }
+    );
+});
+
+bot.action('admin_search_prompt', async (ctx) => {
+    if (!isAdmin(ctx)) return ctx.answerCbQuery("Unauthorized!", { show_alert: true });
+    await ctx.answerCbQuery();
+    const adminId = ctx.from.id.toString();
+    await updateAdminSession(adminId, { step: 'waiting_for_search_query' });
+
+    return ctx.reply(
+        "🔍 *Search Order or User Profile:*\n\n" +
+        "অনুগ্রহ করে কাস্টমারের **User ID**, **Username** (@username), অথবা **Order ID** লিখে পাঠান:",
+        { parse_mode: 'Markdown' }
+    );
+});
+
+bot.action('admin_top_vip_buyers', async (ctx) => {
+    if (!isAdmin(ctx)) return ctx.answerCbQuery("Unauthorized!", { show_alert: true });
+    await ctx.answerCbQuery();
+
+    const vipList = await db.getTopVIPBuyers();
+
+    let text = `👑 *Top VIP Customers Leaderboard* 👑\n` +
+               `━━━━━━━━━━━━━━━━━━\n` +
+               `সবচেয়ে বেশি টাকার কেনাকাটা করা সেরা ১০ জন ভিআইপি গ্রাহকদের তালিকা:\n\n`;
+
+    if (vipList.length === 0) {
+        text += `> ❌ বর্তমানে কোনো ডেলিভারড অর্ডারের রেকর্ড পাওয়া যায়নি।`;
+    } else {
+        vipList.forEach((item, index) => {
+            let medal = "👤";
+            if (index === 0) medal = "🥇";
+            else if (index === 1) medal = "🥈";
+            else if (index === 2) medal = "🥉";
+
+            text += `${medal} *#${index + 1}* - ${item.name} (@${item.username})\n` +
+                    `   ├─ User ID: \`${item.userId}\`\n` +
+                    `   ├─ Total Orders: *${item.count}* টি\n` +
+                    `   └─ Total Spent: *${item.totalSpent} TK*\n\n`;
+        });
+    }
+
+    return ctx.reply(text, {
+        parse_mode: 'Markdown',
+        ...Markup.inlineKeyboard([[Markup.button.callback('🔙 Back to Control Panel', 'open_admin_mgmt_menu')]])
+    });
+});
+
+bot.action('admin_full_db_backup', async (ctx) => {
+    if (!isAdmin(ctx)) return ctx.answerCbQuery("Unauthorized!", { show_alert: true });
+    await ctx.answerCbQuery("Generating full database backup...");
+
+    const backupData = await db.getFullDatabaseBackupData();
+    const jsonString = JSON.stringify(backupData, null, 2);
+    const buffer = Buffer.from(jsonString, 'utf-8');
+
+    const dateStr = new Date().toISOString().split('T')[0];
+
+    return await ctx.replyWithDocument(
+        { source: buffer, filename: `full_bot_backup_${dateStr}.json` },
+        {
+            caption: `💾 *AdsPower Seller BD Bot - Full System Backup*\n\n` +
+                     `• Date: \`${dateStr}\`\n` +
+                     `• Total Users: *${backupData.totalUsersCount || 0}*\n` +
+                     `• Total Orders: *${backupData.totalOrdersCount || 0}*\n\n` +
+                     `আপনার ডাটাবেজের সম্পূর্ণ ব্যাকআপ জেনারেট করে পাঠানো হয়েছে।`,
+            parse_mode: 'Markdown'
+        }
+    );
+});
+
+bot.action('clear_stock_prompt', async (ctx) => {
+    if (!isAdmin(ctx)) return ctx.answerCbQuery("Unauthorized!", { show_alert: true });
+    await ctx.answerCbQuery();
+
+    const allStock = await db.getAllStockAccounts();
+    const available = allStock.filter(i => i.available);
+
+    for (const item of available) {
+        await db.deleteStockAccount(item.code);
+    }
+
+    await ctx.reply("✅ সকল অব্যবহৃত স্টক অ্যাকাউন্ট সফলভাবে মুছে ফেলা হয়েছে!");
+    return showBotControlPanel(ctx);
+});
 
 bot.action('wallets_menu', async (ctx) => {
     if (!isAdmin(ctx)) return ctx.answerCbQuery("Unauthorized!", { show_alert: true });
@@ -1908,30 +2278,38 @@ bot.action('fake_sales_toggle', async (ctx) => {
     return showBotControlPanel(ctx);
 });
 
-// Text / Input Handler
-bot.on(['text', 'photo'], async (ctx) => {
+bot.action('toggle_allow_custom_email', async (ctx) => {
+    if (!isAdmin(ctx)) return ctx.answerCbQuery("Unauthorized!", { show_alert: true });
+    const current = await db.getAllowCustomEmailStatus();
+    await db.setAllowCustomEmailStatus(!current);
+    await ctx.answerCbQuery(`User email choice mode changed to ${!current ? 'ENABLED' : 'DISABLED'}!`);
+    return showBotControlPanel(ctx);
+});
+
+// Text / Input Handler / Document Handler
+bot.on(['text', 'photo', 'document'], async (ctx) => {
     const userId = ctx.from.id.toString();
     const text = ctx.message ? ctx.message.text : null;
 
     if (isAdmin(ctx)) {
-        if (text === '/admin' || text === '👑 Close Admin Panel 👑' || text === '⭐ 📦 Pending Orders ⭐' || text === '⭐ 👥 Total Bot Users ⭐' || text === '📢 Broadcast 📢' || text === '📊 Sales Report 📊' || text === '🎟️ Coupons 🎟️' || text === '⚙️ Bot Control ⚙️') {
-            if (text === '/admin' || text === '⭐ 📦 Pending Orders ⭐') {
-                if (text === '/admin') {
-                    await ctx.reply("👑 *Welcome to Admin Golden Control Panel*", { parse_mode: 'Markdown', ...adminReplyKeyboard });
-                }
+        if (text) {
+            if (text === '/admin') {
+                return showAdminManagementMenu(ctx);
+            }
+            if (text.includes('Pending Orders')) {
                 return showPendingOrdersMenu(ctx);
             } 
-            if (text === '⭐ 👥 Total Bot Users ⭐') {
+            if (text.includes('Total Bot Users')) {
                 return showTotalUsersStats(ctx);
             }
-            if (text === '👑 Close Admin Panel 👑') {
+            if (text.includes('Close Admin Panel')) {
                 return ctx.reply("👑 Admin Panel Closed.", Markup.removeKeyboard());
             }
-            if (text === '📢 Broadcast 📢') {
+            if (text.includes('Broadcast')) {
                 await updateAdminSession(userId, { step: 'waiting_for_broadcast' });
                 return ctx.reply("📢 আপনার ব্রডকাস্ট মেসেজটি (লেখা বা ছবি) পাঠান যা সকল বটের ইউজারের কাছে পাঠানো হবে:");
             }
-            if (text === '📊 Sales Report 📊') {
+            if (text.includes('Sales Report')) {
                 const stats = await getSalesReportStats();
                 const reportText = 
                     `📊 *AdsPower Bot Sales Report* 📊\n\n` +
@@ -1947,10 +2325,10 @@ bot.on(['text', 'photo'], async (ctx) => {
                     ])
                 });
             }
-            if (text === '🎟️ Coupons 🎟️') {
+            if (text.includes('Coupons')) {
                 return showCouponsMenu(ctx);
             }
-            if (text === '⚙️ Bot Control ⚙️') {
+            if (text.includes('Bot Control')) {
                 return showBotControlPanel(ctx);
             }
         }
@@ -1990,11 +2368,285 @@ bot.on(['text', 'photo'], async (ctx) => {
                 );
             }
 
+            if (state === 'waiting_for_search_query' && text) {
+                await clearAdminSession(userId);
+                const query = text.trim().replace('@', '');
+                
+                let foundUser = null;
+                let userOrders = [];
+
+                if (db.isConfigured()) {
+                    const allUsers = (await db.getAllUsers()) || [];
+                    foundUser = allUsers.find(u => u.user_id.toString() === query || (u.username && u.username.toLowerCase() === query.toLowerCase()));
+                    const targetId = foundUser ? foundUser.user_id.toString() : query;
+                    userOrders = (await db.getUserOrders(targetId)) || [];
+
+                    if (!foundUser && userOrders.length === 0) {
+                        const allOrders = (await db.getAllOrders()) || [];
+                        const matchOrder = allOrders.find(o => String(o.id) === query);
+                        if (matchOrder) {
+                            userOrders = [matchOrder];
+                            foundUser = allUsers.find(u => u.user_id.toString() === matchOrder.user_id.toString());
+                        }
+                    }
+                }
+
+                const targetId = foundUser ? foundUser.user_id.toString() : query;
+                const isBanned = await db.isUserBanned(targetId);
+                const balance = await db.getUserBalance(targetId);
+
+                let resultMsg = `🔍 *Search Results for "${query}"*\n` +
+                                `━━━━━━━━━━━━━━━━━━\n` +
+                                `👤 *Name:* ${foundUser ? foundUser.first_name : 'N/A'}\n` +
+                                `🔗 *Username:* @${foundUser && foundUser.username ? foundUser.username : 'N/A'}\n` +
+                                `🆔 *User ID:* \`${targetId}\`\n` +
+                                ` Status: ${isBanned ? '⛔ **Banned**' : '🟢 **Active**'}\n` +
+                                `💰 *Balance:* \`${balance} TK\`\n` +
+                                `🛍 *Total Orders Found:* *${userOrders.length}*\n` +
+                                `━━━━━━━━━━━━━━━━━━\n\n`;
+
+                if (userOrders.length > 0) {
+                    resultMsg += `📋 *Delivered Orders / Account Records:*\n`;
+                    userOrders.slice(0, 10).forEach((ord, index) => {
+                        resultMsg += `${index + 1}. Package: *${ord.package_name || ord.packageName}* | Status: *${ord.status}*\n`;
+                        if (ord.custom_email || ord.customEmail) {
+                            resultMsg += `   └─ 📧 Email: \`${ord.custom_email || ord.customEmail}\`\n`;
+                        }
+                        if (ord.custom_pass || ord.customPass) {
+                            resultMsg += `   └─ 🔑 Pass: \`${ord.custom_pass || ord.customPass}\`\n`;
+                        }
+                    });
+                } else {
+                    resultMsg += `> ❌ কোনো পূর্বাভিজ্ঞ অর্ডারের তথ্য পাওয়া যায়নি।`;
+                }
+
+                return ctx.reply(resultMsg, {
+                    parse_mode: 'Markdown',
+                    ...Markup.inlineKeyboard([[Markup.button.callback('🔙 Back to Control Panel', 'open_admin_mgmt_menu')]])
+                });
+            }
+
+            if (state === 'waiting_for_stock_bulk_add') {
+                let rawContent = text;
+                if (ctx.message && ctx.message.document) {
+                    try {
+                        const fileLink = await ctx.telegram.getFileLink(ctx.message.document.file_id);
+                        const response = await fetch(fileLink.href);
+                        rawContent = await response.text();
+                    } catch (e) {
+                        return ctx.reply(`❌ .txt ফাইল পড়তে সমস্যা হয়েছে: ${e.message}`);
+                    }
+                }
+
+                if (rawContent && rawContent.trim()) {
+                    await clearAdminSession(userId);
+                    const lines = rawContent.trim().split(/\r?\n/);
+                    let count = 0;
+                    for (const line of lines) {
+                        if (line.trim()) {
+                            await db.addStockAccount(line.trim());
+                            count++;
+                        }
+                    }
+                    await ctx.reply(`✅ সফলভাবে *${count}* টি অ্যাকাউন্ট স্টকে যোগ করা হয়েছে!`, { parse_mode: 'Markdown' });
+                    return showBotControlPanel(ctx);
+                }
+            }
+
             if (state === 'waiting_for_notice_text' && text) {
                 await clearAdminSession(userId);
                 await setNoticeText(text.trim());
                 await ctx.reply("✅ নতুন নোটিশ মেসেজ সফলভাবে সংরক্ষণ করা হয়েছে!");
                 return showBotControlPanel(ctx);
+            }
+
+            if (state === 'waiting_for_user_status_id' && text) {
+                await clearAdminSession(userId);
+                const query = text.trim();
+                const allUsers = (await db.getAllUsers()) || [];
+                const userObj = allUsers.find(u => u.user_id.toString() === query || (u.username && u.username.toLowerCase() === query.replace('@', '').toLowerCase()));
+                const targetId = userObj ? userObj.user_id.toString() : query;
+                
+                const balance = await db.getUserBalance(targetId);
+                const isBanned = await db.isUserBanned(targetId);
+                const orders = (await db.getUserOrders(targetId)) || [];
+
+                const userText = 
+                    `👤 *User Status Details*\n\n` +
+                    `• **User ID:** \`${targetId}\`\n` +
+                    `• **First Name:** ${userObj ? userObj.first_name : 'N/A'}\n` +
+                    `• **Username:** ${userObj && userObj.username ? '@' + userObj.username : 'N/A'}\n` +
+                    `• **Account Status:** ${isBanned ? '⛔ **Banned**' : '🟢 **Active**'}\n` +
+                    `• **Current Balance:** \`${balance} TK\`\n` +
+                    `• **Total Orders Placed:** *${orders.length}*\n\n` +
+                    `নিচের বাটন চেপে কুইক অ্যাকশন নিন:`;
+
+                const keyboard = Markup.inlineKeyboard([
+                    [
+                        isBanned 
+                            ? Markup.button.callback('🔓 Unban User', `unban_id_${targetId}`)
+                            : Markup.button.callback('⛔ Ban User', `ban_id_${targetId}`)
+                    ],
+                    [Markup.button.callback('🔙 Back to Management', 'open_admin_mgmt_menu')]
+                ]);
+
+                return ctx.reply(userText, { parse_mode: 'Markdown', ...keyboard });
+            }
+
+            if (state.startsWith('waiting_for_card_') && text) {
+                const raw = state.replace('waiting_for_card_', '');
+                let field = '';
+                let itemKey = '';
+
+                if (raw.startsWith('label_')) {
+                    field = 'label';
+                    itemKey = raw.replace('label_', '');
+                } else if (raw.startsWith('msg_')) {
+                    field = 'msg';
+                    itemKey = raw.replace('msg_', '');
+                } else if (raw.startsWith('emojiid_')) {
+                    field = 'emojiid';
+                    itemKey = raw.replace('emojiid_', '');
+                }
+
+                await clearAdminSession(userId);
+
+                if (field === 'label') {
+                    await setCustomText(`LABEL_${itemKey}`, text.trim());
+                    await ctx.reply(`✅ *Label for ${itemKey} Updated!*`, { parse_mode: 'Markdown' });
+                } else if (field === 'msg') {
+                    await setCustomText(`MSG_${itemKey}`, text.trim());
+                    if (['BKASH', 'NAGAD', 'BINANCE', 'PAYONEER'].includes(itemKey)) {
+                        await setWallet(itemKey.toLowerCase(), text.trim());
+                    }
+                    await ctx.reply(`✅ *Message / Number for ${itemKey} Updated!*`, { parse_mode: 'Markdown' });
+                } else if (field === 'emojiid') {
+                    await setCustomText(`EMOJIID_${itemKey}`, text.trim());
+                    await ctx.reply(`✨ *Premium Emoji ID for ${itemKey} Updated!*`, { parse_mode: 'Markdown' });
+                }
+
+                return showCustomizeItemCard(ctx, itemKey);
+            }
+
+            if (state.startsWith('waiting_for_emoji_') && text) {
+                const type = state.replace('waiting_for_emoji_', '');
+                await clearAdminSession(userId);
+                await setCustomText(`EMOJI_${type.toUpperCase()}`, text.trim());
+                await ctx.reply(`✨ *${type.toUpperCase()} Button Emoji Updated to:* ${text.trim()}`, { parse_mode: 'Markdown' });
+                return showAdminManagementMenu(ctx);
+            }
+
+            if (state === 'waiting_for_new_join_link' && text) {
+                await clearAdminSession(userId);
+                const newLink = text.trim();
+                await setWallet('join_link', newLink);
+                await ctx.reply(`📡 *Force Join Link/Username Updated!*\n\nনতুন লিংক: \`${newLink}\``, { parse_mode: 'Markdown' });
+                return showAdminManagementMenu(ctx);
+            }
+
+            if (state === 'waiting_for_welcome_msg' && text) {
+                await clearAdminSession(userId);
+                await setCustomText('WELCOME', text.trim());
+                await ctx.reply("💎 *Welcome Message Updated!*", { parse_mode: 'Markdown' });
+                return showAdminManagementMenu(ctx);
+            }
+
+            if (state === 'waiting_for_buy_now_title' && text) {
+                await clearAdminSession(userId);
+                await setCustomText('BUY_NOW', text.trim());
+                await ctx.reply("🛒 *Buy Now Title Updated!*", { parse_mode: 'Markdown' });
+                return showAdminManagementMenu(ctx);
+            }
+
+            if (state === 'waiting_for_profile_title' && text) {
+                await clearAdminSession(userId);
+                await setCustomText('PROFILE', text.trim());
+                await ctx.reply("👤 *Profile Title Updated!*", { parse_mode: 'Markdown' });
+                return showAdminManagementMenu(ctx);
+            }
+
+            if (state === 'waiting_for_my_order_title' && text) {
+                await clearAdminSession(userId);
+                await setCustomText('MY_ORDER', text.trim());
+                await ctx.reply("🛍 *My Order Title Updated!*", { parse_mode: 'Markdown' });
+                return showAdminManagementMenu(ctx);
+            }
+
+            if (state === 'waiting_for_faq_text' && text) {
+                await clearAdminSession(userId);
+                await setCustomText('FAQ', text.trim());
+                await ctx.reply("❓ *FAQ & Help Guide Text Updated!*", { parse_mode: 'Markdown' });
+                return showAdminManagementMenu(ctx);
+            }
+
+            if (state === 'waiting_for_leaderboard_title' && text) {
+                await clearAdminSession(userId);
+                await setCustomText('LEADERBOARD', text.trim());
+                await ctx.reply("🏆 *Leaderboard Title Updated!*", { parse_mode: 'Markdown' });
+                return showAdminManagementMenu(ctx);
+            }
+
+            if (state === 'waiting_for_support_username' && text) {
+                await clearAdminSession(userId);
+                const username = text.trim().startsWith('@') ? text.trim() : '@' + text.trim();
+                await setCustomText('SUPPORT_USER', username);
+                await ctx.reply(`📞 *Support Admin Username Updated to ${username}!*`, { parse_mode: 'Markdown' });
+                return showAdminManagementMenu(ctx);
+            }
+
+            if (state === 'waiting_for_ban_user_id' && text) {
+                await clearAdminSession(userId);
+                const targetId = text.trim();
+                await db.banUser(targetId);
+                await ctx.reply(`⛔ ইউজার ID \`${targetId}\` কে সফলভাবে **ব্যান** করা হয়েছে!`, { parse_mode: 'Markdown' });
+                return showAdminManagementMenu(ctx);
+            }
+
+            if (state === 'waiting_for_unban_user_id' && text) {
+                await clearAdminSession(userId);
+                const targetId = text.trim();
+                await db.unbanUser(targetId);
+                await ctx.reply(`🔓 ইউজার ID \`${targetId}\` কে সফলভাবে **আনব্যান** করা হয়েছে!`, { parse_mode: 'Markdown' });
+                return showAdminManagementMenu(ctx);
+            }
+
+            if (state === 'waiting_for_add_balance' && text) {
+                await clearAdminSession(userId);
+                const parts = text.trim().split(/\s+/);
+                if (parts.length < 2) {
+                    return ctx.reply("❌ ভুল ফরম্যাট! উদাহরণ: `1262396547 100` (User_ID টাকার_পরিমাণ)", { parse_mode: 'Markdown' });
+                }
+                const targetId = parts[0];
+                const amount = parseInt(parts[1]);
+                if (isNaN(amount) || amount <= 0) {
+                    return ctx.reply("❌ টাকার পরিমাণ সঠিক সংখ্যা হতে হবে।");
+                }
+                const curr = await db.getUserBalance(targetId);
+                const newBal = curr + amount;
+                await db.setUserBalance(targetId, newBal);
+                await ctx.reply(`➕ ইউজার \`${targetId}\` এর অ্যাকাউন্টে *${amount} TK* যোগ করা হয়েছে!\n\nবর্তমান ব্যালেন্স: *${newBal} TK*`, { parse_mode: 'Markdown' });
+                try {
+                    await ctx.telegram.sendMessage(targetId, `🎉 *Balance Updated!*\n\nএডমিন আপনার অ্যাকাউন্টে *${amount} TK* যোগ করেছেন।\nবর্তমান ব্যালেন্স: *${newBal} TK*`, { parse_mode: 'Markdown' });
+                } catch(e) {}
+                return showAdminManagementMenu(ctx);
+            }
+
+            if (state === 'waiting_for_remove_balance' && text) {
+                await clearAdminSession(userId);
+                const parts = text.trim().split(/\s+/);
+                if (parts.length < 2) {
+                    return ctx.reply("❌ ভুল ফরম্যাট! উদাহরণ: `1262396547 50` (User_ID টাকার_পরিমাণ)", { parse_mode: 'Markdown' });
+                }
+                const targetId = parts[0];
+                const amount = parseInt(parts[1]);
+                if (isNaN(amount) || amount <= 0) {
+                    return ctx.reply("❌ টাকার পরিমাণ সঠিক সংখ্যা হতে হবে।");
+                }
+                const curr = await db.getUserBalance(targetId);
+                const newBal = Math.max(0, curr - amount);
+                await db.setUserBalance(targetId, newBal);
+                await ctx.reply(`➖ ইউজার \`${targetId}\` এর অ্যাকাউন্ট থেকে *${amount} TK* কেটে নেওয়া হয়েছে!\n\nবর্তমান ব্যালেন্স: *${newBal} TK*`, { parse_mode: 'Markdown' });
+                return showAdminManagementMenu(ctx);
             }
 
             if (state === 'waiting_for_refer_reward' && text) {
@@ -2328,6 +2980,13 @@ bot.on(['text', 'photo'], async (ctx) => {
     const session = await getUserSession(userId);
     if (!session) return;
 
+    if (session.waitingFor === 'user_custom_email_input' && text) {
+        const customEmail = text.trim();
+        await updateUserSession(userId, { customEmail: customEmail, waitingFor: null });
+        await ctx.reply(`✅ ইমেইল সংরক্ষণ করা হয়েছে: \`${customEmail}\``, { parse_mode: 'Markdown' });
+        return showPaymentSelectionScreen(ctx, userId);
+    }
+
     if (session.waitingFor === 'coupon_code' && text) {
         const inputCode = text.trim().toUpperCase();
         await updateUserSession(userId, { waitingFor: null });
@@ -2651,16 +3310,22 @@ bot.action(/^view_order_(.+)$/, async (ctx) => {
     const isPhotoProof = ord.proof && ord.proof.startsWith("photo:");
     const photoFileId = isPhotoProof ? ord.proof.substring(6) : null;
 
+    // Fetch available stock items
+    const allStock = await db.getAllStockAccounts();
+    const availableStock = allStock.filter(i => i.available);
+
     let detailsMsg = `📋 *Order Details*\n\n` +
                      `👤 *Name:* ${ord.name}\n` +
                      `🔗 *Username:* @${ord.username}\n` +
                      `🆔 *User ID:* \`${ord.userId}\`\n` +
                      `💳 *Method:* ${ord.method}\n` +
                      `📦 *Package:* ${ord.packageName}\n` +
-                     `📌 *Proof:* ${isPhotoProof ? '`[Screenshot Attached]`' : `\`${ord.proof}\``}`;
+                     `📌 *Proof:* ${isPhotoProof ? '`[Screenshot Attached]`' : `\`${ord.proof}\``}\n\n` +
+                     `📦 *Available Stock in Pool:* *${availableStock.length}* টি`;
 
     const inlineMarkup = Markup.inlineKeyboard([
-        [Markup.button.callback('✅ Confirm & Input Email/Pass', `start_custom_pass_${targetUserId}`)],
+        [Markup.button.callback(`📦 Reserve Stock Account (${availableStock.length} Available)`, `reserve_stock_${targetUserId}`)],
+        [Markup.button.callback('✍️ Manual Input Email/Pass', `start_custom_pass_${targetUserId}`)],
         [Markup.button.callback('❌ Reject Order', `start_reject_order_${targetUserId}`)]
     ]);
 
@@ -2683,6 +3348,221 @@ bot.action(/^view_order_(.+)$/, async (ctx) => {
             parse_mode: 'Markdown',
             ...inlineMarkup
         });
+    }
+});
+
+bot.action(/^reserve_specific_stock_(.+)_(.+)$/, async (ctx) => {
+    if (!isAdmin(ctx)) return ctx.answerCbQuery("Unauthorized!", { show_alert: true });
+    await ctx.answerCbQuery();
+    const targetUserId = ctx.match[1];
+    const stockId = ctx.match[2];
+
+    const stockData = await db.popSpecificStockAccount(stockId, targetUserId);
+
+    if (!stockData) {
+        return ctx.reply("⚠️ উক্ত স্টক অ্যাকাউন্টটি ইতিমধ্যে অন্য অর্ডারে ব্যবহৃত বা রিমুভ হয়ে গেছে!");
+    }
+
+    // Trigger Low Stock Alert check
+    await checkLowStockAlert(ctx);
+
+    // Save reserved account info into order details
+    if (db.isConfigured()) {
+        await db.updateOrderStatus(targetUserId, 'Pending 10-Day Setup', stockData, 'Reserved-Pass');
+    } else {
+        if (memoryPendingOrders[targetUserId]) {
+            memoryPendingOrders[targetUserId].status = 'Pending 10-Day Setup';
+            memoryPendingOrders[targetUserId].reservedAccount = stockData;
+        }
+    }
+
+    let emailVal = stockData;
+    let passVal = '10-Day Premium Active';
+    if (stockData.includes(':')) {
+        const parts = stockData.split(':');
+        emailVal = parts[0].trim();
+        passVal = parts[1].trim();
+    }
+
+    // Send instant 1-Tap Copy text box to Admin
+    await ctx.reply(
+        `📋 *Reserved Stock Credentials (1-Tap Copy):*\n\n` +
+        `📧 *Email (কপি করতে ট্যাপ করুন):*\n\`${emailVal}\`\n\n` +
+        `🔑 *Password (কপি করতে ট্যাপ করুন):*\n\`${passVal}\`\n\n` +
+        `> 💡 *ক্লিক বা ট্যাপ করলেই ১-সেকেন্ডে টেক্সট কপি হয়ে যাবে।*`,
+        { parse_mode: 'Markdown' }
+    );
+
+    const confirmMsg = `📥 *Stock Account Reserved for User!* \n` +
+                       `━━━━━━━━━━━━━━━━━━\n` +
+                       `👤 *Customer ID:* \`${targetUserId}\`\n` +
+                       `📧 *Assigned Email:* \`${emailVal}\`\n` +
+                       `🔑 *Assigned Pass:* \`${passVal}\`\n` +
+                       `⏳ *Status:* 10-Day Premium Setup Required\n` +
+                       `━━━━━━━━━━━━━━━━━━\n\n` +
+                       `👉 *আপনার করণীয়:* AdsPower ক্লায়েন্টে উক্ত আইডিতে ১০ দিনের প্রিমিয়াম এক্সেস একটিভ করুন।\n\n` +
+                       `এক্টিভেশন শেষ হলে নিচের **"✅ Done & Deliver to Customer"** বাটনে ১-ক্লিক করুন:`;
+
+    return ctx.reply(confirmMsg, {
+        parse_mode: 'Markdown',
+        ...Markup.inlineKeyboard([
+            [Markup.button.callback(`📧 Copy Email: ${emailVal}`, `copy_email_${emailVal}`)],
+            [Markup.button.callback(`🔑 Copy Pass: ${passVal}`, `copy_pass_${passVal}`)],
+            [Markup.button.callback('✅ Done & 1-Click Deliver to Customer', `deliver_stock_${targetUserId}`)],
+            [Markup.button.callback('❌ Reject / Cancel Order', `start_reject_order_${targetUserId}`)]
+        ])
+    });
+});
+
+bot.action(/^reserve_stock_(.+)$/, async (ctx) => {
+    if (!isAdmin(ctx)) return ctx.answerCbQuery("Unauthorized!", { show_alert: true });
+    await ctx.answerCbQuery();
+    const targetUserId = ctx.match[1];
+
+    const stockData = await db.popStockAccount(targetUserId);
+
+    if (!stockData) {
+        return ctx.reply(
+            "⚠️ *স্টকে কোনো অব্যবহৃত অ্যাকাউন্ট খালি নেই!*\n\n" +
+            "দয়া করে আগে স্টকে নতুন অ্যাকাউন্ট যোগ করুন অথবা ম্যানুয়ালি ইমেইল-পাসওয়ার্ড ইনপুট দিন:",
+            {
+                parse_mode: 'Markdown',
+                ...Markup.inlineKeyboard([
+                    [Markup.button.callback('➕ Add to Stock Pool', 'add_stock_prompt')],
+                    [Markup.button.callback('✍️ Manual Input Email/Pass', `start_custom_pass_${targetUserId}`)]
+                ])
+            }
+        );
+    }
+
+    // Trigger Low Stock Alert check
+    await checkLowStockAlert(ctx);
+
+    // Save reserved account info into order details
+    if (db.isConfigured()) {
+        await db.updateOrderStatus(targetUserId, 'Pending 10-Day Setup', stockData, 'Reserved-Pass');
+    } else {
+        if (memoryPendingOrders[targetUserId]) {
+            memoryPendingOrders[targetUserId].status = 'Pending 10-Day Setup';
+            memoryPendingOrders[targetUserId].reservedAccount = stockData;
+        }
+    }
+
+    let emailVal = stockData;
+    let passVal = '10-Day Premium Active';
+    if (stockData.includes(':')) {
+        const parts = stockData.split(':');
+        emailVal = parts[0].trim();
+        passVal = parts[1].trim();
+    }
+
+    // Send instant 1-Tap Copy text box to Admin
+    await ctx.reply(
+        `📋 *Reserved Stock Credentials (1-Tap Copy):*\n\n` +
+        `📧 *Email (কপি করতে ট্যাপ করুন):*\n\`${emailVal}\`\n\n` +
+        `🔑 *Password (কপি করতে ট্যাপ করুন):*\n\`${passVal}\`\n\n` +
+        `> 💡 *ক্লিক বা ট্যাপ করলেই ১-সেকেন্ডে টেক্সট কপি হয়ে যাবে।*`,
+        { parse_mode: 'Markdown' }
+    );
+
+    const confirmMsg = `📥 *Stock Account Reserved for User!* \n` +
+                       `━━━━━━━━━━━━━━━━━━\n` +
+                       `👤 *Customer ID:* \`${targetUserId}\`\n` +
+                       `📧 *Assigned Account:* \`${stockData}\`\n` +
+                       `⏳ *Status:* 10-Day Premium Setup Required\n` +
+                       `━━━━━━━━━━━━━━━━━━\n\n` +
+                       `👉 *আপনার করণীয়:* AdsPower ক্লায়েন্টে উক্ত আইডিতে ১০ দিনের প্রিমিয়াম এক্সেস একটিভ করুন।\n\n` +
+                       `এক্টিভেশন শেষ হলে নিচের **"✅ Done & Deliver to Customer"** বাটনে ১-ক্লিক করুন:`;
+                       `━━━━━━━━━━━━━━━━━━\n\n` +
+                       `👉 *আপনার করণীয়:* AdsPower ক্লায়েন্টে উক্ত আইডিতে ১০ দিনের প্রিমিয়াম এক্সেস একটিভ করুন।\n\n` +
+                       `এক্টিভেশন শেষ হলে নিচের **"✅ Done & Deliver to Customer"** বাটনে ১-ক্লিক করুন:`;
+
+    return ctx.reply(confirmMsg, {
+        parse_mode: 'Markdown',
+        ...Markup.inlineKeyboard([
+            [Markup.button.callback('✅ Done & 1-Click Deliver to Customer', `deliver_stock_${targetUserId}`)],
+            [Markup.button.callback('❌ Reject / Cancel Order', `start_reject_order_${targetUserId}`)]
+        ])
+    });
+});
+
+bot.action(/^deliver_stock_(.+)$/, async (ctx) => {
+    if (!isAdmin(ctx)) return ctx.answerCbQuery("Unauthorized!", { show_alert: true });
+    await ctx.answerCbQuery();
+    const targetUserId = ctx.match[1];
+
+    let customAccountData = null;
+    if (db.isConfigured()) {
+        const ord = await db.getOrderForUser(targetUserId) || (await db.getUserOrders(targetUserId) || []).find(o => o.status === 'Pending 10-Day Setup');
+        if (ord) customAccountData = ord.custom_email;
+        await db.updateOrderStatus(targetUserId, 'Completed', customAccountData || 'AdsPower Premium Account', 'Delivered');
+    } else {
+        if (memoryPendingOrders[targetUserId]) {
+            customAccountData = memoryPendingOrders[targetUserId].reservedAccount;
+            memoryPendingOrders[targetUserId].status = 'Completed';
+            delete memoryPendingOrders[targetUserId];
+        }
+    }
+
+    if (!customAccountData) {
+        customAccountData = "AdsPower 10-Day Premium Account";
+    }
+
+    // Check referral reward
+    await checkAndRewardReferral(targetUserId, ctx);
+
+    if (!memoryUserOrderHistory[targetUserId]) memoryUserOrderHistory[targetUserId] = [];
+    memoryUserOrderHistory[targetUserId].push({
+        packageName: '10-Day Premium AdsPower Account',
+        method: '1-Click Stock Delivery',
+        status: 'Completed',
+        createdAt: new Date().toISOString()
+    });
+
+    // Parse email & pass if format is email:pass
+    let emailVal = customAccountData;
+    let passVal = '10-Day Premium Active';
+    if (customAccountData.includes(':')) {
+        const parts = customAccountData.split(':');
+        emailVal = parts[0].trim();
+        passVal = parts[1].trim();
+    }
+
+    // Post Real Completed Order to Group
+    try {
+        const realSaleMsg = `🟢 **ORDER SUCCESSFUL (10-DAY PREMIUM)**\n\n` +
+                             `╔════════════════════╗\n` +
+                             `**🛒 ADSPOWER PREMIUM ACCOUNT**\n` +
+                             `╚════════════════════╝\n\n` +
+                             `📡 STATUS → 🟢 **DELIVERED WITH 10-DAY PREMIUM**\n\n` +
+                             `> 🚀 **ADSPOWER SELLER BD**`;
+
+        await ctx.telegram.sendMessage(parseInt(GROUP_ID), realSaleMsg, { parse_mode: 'Markdown' });
+    } catch (err) {}
+
+    // Send credentials to User
+    try {
+        await ctx.telegram.sendMessage(
+            targetUserId,
+            `🎉 *Congratulations on Your Purchase!* 💎\n` +
+            `━━━━━━━━━━━━━━━━━━\n` +
+            `> *আপনার পেমেন্ট সফলভাবে ভেরিফাই হয়েছে এবং ১০ দিনের প্রিমিয়াম এক্সেস এক্টিভ করা হয়েছে!*\n\n` +
+            `📧 *Email / Account:* \`${emailVal}\`\n` +
+            `🔑 *Password:* \`${passVal}\`\n\n` +
+            `👇 নিচের বাটনগুলোতে ক্লিক করে তথ্য এক ক্লিকে কপি করে নিন:`,
+            {
+                parse_mode: 'Markdown',
+                ...Markup.inlineKeyboard([
+                    [Markup.button.callback(`📧 Copy Email: ${emailVal}`, `copy_email_${emailVal}`)],
+                    [Markup.button.callback(`🔑 Copy Pass: ${passVal}`, `copy_pass_${passVal}`)],
+                    [Markup.button.callback('🔑 Get Login Code', `get_code_${targetUserId}`)],
+                    [Markup.button.callback('📦 AdsPower Details', 'details')]
+                ])
+            }
+        );
+        return ctx.reply(`✅ 10-Day Premium Account Successfully Delivered to Customer (${targetUserId})!`);
+    } catch (err) {
+        return ctx.reply(`❌ ইউজারকে মেসেজ পাঠানো যায়নি (ইউজার হয়তো বট ব্লক করেছেন)।`);
     }
 });
 
@@ -3088,6 +3968,420 @@ bot.action(/^toggle_stock_(pkg_\d+)$/, async (ctx) => {
     });
 });
 
+// Admin Management Action Handlers
+bot.action('open_admin_mgmt_menu', async (ctx) => {
+    if (!isAdmin(ctx)) return ctx.answerCbQuery("Unauthorized!", { show_alert: true });
+    await ctx.answerCbQuery();
+    return showAdminManagementMenu(ctx);
+});
+
+bot.action('admin_back_to_main', async (ctx) => {
+    if (!isAdmin(ctx)) return ctx.answerCbQuery("Unauthorized!", { show_alert: true });
+    await ctx.answerCbQuery();
+    return showBotControlPanel(ctx);
+});
+
+bot.action('admin_today_status', async (ctx) => {
+    if (!isAdmin(ctx)) return ctx.answerCbQuery("Unauthorized!", { show_alert: true });
+    await ctx.answerCbQuery();
+
+    const stats = await getSalesReportStats();
+    const pendingOrders = (await db.getPendingOrders()) || [];
+    const allUsers = (await db.getAllUsers()) || [];
+    const bannedUsers = await db.getAllBannedUsers();
+    const isMaintenance = await getMaintenanceMode();
+
+    const statusMsg = 
+        `📈 *Today's Overall Status Report*\n\n` +
+        `• **Bot Mode:** ${isMaintenance ? '🔴 Maintenance ON' : '🟢 Operational ON'}\n` +
+        `• **Today's Revenue:** *${stats.todayRevenue} TK*\n` +
+        `• **This Month's Revenue:** *${stats.monthRevenue} TK*\n` +
+        `• **Total Completed Orders:** *${stats.totalCount}*\n` +
+        `• **Pending Orders Verification:** *${pendingOrders.length}*\n` +
+        `• **Total Registered Users:** *${allUsers.length}*\n` +
+        `• **Total Banned Users:** *${bannedUsers.length}*\n\n` +
+        `⏱️ *Last Updated:* ${new Date().toLocaleString('en-US', { timeZone: 'Asia/Dhaka' })}`;
+
+    const keyboard = Markup.inlineKeyboard([
+        [Markup.button.callback('🔄 Refresh Status', 'admin_today_status')],
+        [Markup.button.callback('🔙 Back to Management', 'open_admin_mgmt_menu')]
+    ]);
+
+    return ctx.editMessageText(statusMsg, { parse_mode: 'Markdown', ...keyboard });
+});
+
+bot.action('admin_user_status', async (ctx) => {
+    if (!isAdmin(ctx)) return ctx.answerCbQuery("Unauthorized!", { show_alert: true });
+    await ctx.answerCbQuery();
+    const adminId = ctx.from.id.toString();
+    await updateAdminSession(adminId, { step: 'waiting_for_user_status_id' });
+    return ctx.reply("👤 *User Status Check*\n\nঅনুগ্রহ করে যে ইউজারের বিবরণ দেখতে চান তার **Telegram User ID** অথবা **Username** লিখুন (যেমন: `1262396547` বা `@username`):", { parse_mode: 'Markdown' });
+});
+
+bot.action('admin_update_joins', async (ctx) => {
+    if (!isAdmin(ctx)) return ctx.answerCbQuery("Unauthorized!", { show_alert: true });
+    await ctx.answerCbQuery();
+    const adminId = ctx.from.id.toString();
+    await updateAdminSession(adminId, { step: 'waiting_for_new_join_link' });
+    return ctx.reply("📡 *Update Force Join Link*\n\nনতুন টেলিগ্রাম চ্যানেল/গ্রুপ জয়েন লিংক বা ইউজারনেম লিখে পাঠান:\n(যেমন: `https://t.me/AdsPowerSellerBDGroup` অথবা `@AdsPowerGroup`)", { parse_mode: 'Markdown' });
+});
+
+bot.action('admin_live_services', async (ctx) => {
+    if (!isAdmin(ctx)) return ctx.answerCbQuery("Unauthorized!", { show_alert: true });
+    await ctx.answerCbQuery();
+
+    const stock1 = await getPackageStockStatus('pkg_1');
+    const stock3 = await getPackageStockStatus('pkg_3');
+    const stock5 = await getPackageStockStatus('pkg_5');
+    const isMaintenance = await getMaintenanceMode();
+    const isSellingHours = await getSellingHoursStatus();
+
+    const liveText = 
+        `🛰️ *Live Bot Services Status*\n\n` +
+        `• **Core System:** ${isMaintenance ? '🔴 Maintenance' : '🟢 Operational'}\n` +
+        `• **Selling Schedule:** ${isSellingHours ? '🕒 11am-11pm Limit' : '⚡ 24 Hours Active'}\n` +
+        `• **Package 1 Acc:** ${stock1 ? '🟢 Available' : '🔴 Out of Stock'}\n` +
+        `• **Package 3 Acc:** ${stock3 ? '🟢 Available' : '🔴 Out of Stock'}\n` +
+        `• **Package 5 Acc:** ${stock5 ? '🟢 Available' : '🔴 Out of Stock'}\n\n` +
+        `কন্ট্রোল প্যানেল থেকে স্টক বা টাইমিং পরিবর্তন করতে পারবেন।`;
+
+    const keyboard = Markup.inlineKeyboard([
+        [Markup.button.callback('📦 Manage Stock', 'stock_menu')],
+        [Markup.button.callback('🔙 Back to Management', 'open_admin_mgmt_menu')]
+    ]);
+
+    return ctx.editMessageText(liveText, { parse_mode: 'Markdown', ...keyboard });
+});
+
+const CUSTOMIZABLE_ITEMS = {
+    // User Bot Main Buttons & Screens
+    'WELCOME': { name: '💎 Welcome Message (/start)', defaultMsg: 'স্বাগতম আমাদের শপে!', defaultLabel: 'Welcome Message' },
+    'DETAILS': { name: '📦 AdsPower Details (Package Info Screen)', defaultMsg: 'AdsPower এন্টি-ডিটেক্ট ব্রাউজার প্যাকেজ বিবরণ:', defaultLabel: 'AdsPower Details' },
+    'BUY_NOW': { name: '🛒 BUY NOW (Main Button & Options Title)', defaultMsg: 'AdsPower প্যাকেজসমূহ সিলেক্ট করুন:', defaultLabel: 'Buy Now' },
+    'PROFILE': { name: '👤 PROFILE (Main Button & Screen Title)', defaultMsg: 'আপনার অ্যাকাউন্ট প্রোফাইল বিবরণ:', defaultLabel: 'My Profile' },
+    'MY_ORDER': { name: '🛍 MY ORDER (Main Button & Screen Title)', defaultMsg: 'আপনার পূর্বের অর্ডারসমূহ:', defaultLabel: 'My Order' },
+    'NOTICE': { name: '📢 OFFERS & NOTICE (Main Button & Notice Title)', defaultMsg: 'সাম্প্রতিক নোটিশ ও অফার:', defaultLabel: 'Offers & Notice' },
+    'FAQ': { name: '❓ FAQ & HELP GUIDE (FAQ Screen Text)', defaultMsg: 'সাধারণ জিজ্ঞাসা ও সাহায্য নির্দেশিকা:', defaultLabel: 'FAQ & Help Guide' },
+    'LEADERBOARD': { name: '🏆 LEADERBOARD (Leaderboard Screen Title)', defaultMsg: 'সর্বোচ্চ ক্রয়কারী গ্রাহকদের তালিকা:', defaultLabel: 'Leaderboard' },
+    'SUPPORT': { name: '📞 SUPPORT (Contact Support Admin Username)', defaultMsg: 'এডমিন সাপোর্ট ইউজারনেম: @prime8088', defaultLabel: 'Contact Support' },
+    'VERIFY_JOIN': { name: '🔄 VERIFY JOIN (Force Join Screen Title)', defaultMsg: 'গ্রুপে জয়েন করে ভেরিফাই করুন:', defaultLabel: 'Verify / Check Join' },
+    'REF_BONUS': { name: '🎁 REFERRAL (Referral Reward Amount)', defaultMsg: '৩ টাকা ডিসকাউন্ট কুপন বোনাস', defaultLabel: 'Referral Bonus' },
+
+    // Gateways
+    'BKASH': { name: '🌸 PAYMENT: bKash Gateway Number', defaultMsg: '01864339154', defaultLabel: 'bKash Gateway' },
+    'NAGAD': { name: '🍑 PAYMENT: Nagad Gateway Number', defaultMsg: '01864339154', defaultLabel: 'Nagad Gateway' },
+    'BINANCE': { name: '🟡 PAYMENT: Binance Pay ID', defaultMsg: '955102483', defaultLabel: 'Binance Pay' },
+    'PAYONEER': { name: '🔷 PAYMENT: Payoneer Email', defaultMsg: 'mithuchandra647@gmail.com', defaultLabel: 'Payoneer Email' },
+
+    // Admin Control Panel Buttons & Actions
+    'ADMIN_PENDING_ORDERS': { name: '📥 ADMIN: Pending Orders Menu', defaultMsg: 'পেন্ডিং অর্ডার এপ্রুভাল প্যানেল', defaultLabel: 'Pending Orders' },
+    'ADMIN_TOTAL_USERS': { name: '👥 ADMIN: Total Users Stats', defaultMsg: 'বটের নিবন্ধিত কাস্টমার পরিসংখ্যান', defaultLabel: 'Total Bot Users' },
+    'ADMIN_BROADCAST': { name: '📢 ADMIN: Broadcast Message', defaultMsg: 'ইউজারদের বাল্ক মেসেজ নোটিফিকেশন', defaultLabel: 'Broadcast' },
+    'ADMIN_SALES_REPORT': { name: '📊 ADMIN: Sales Report', defaultMsg: 'বিক্রির বিবরণ ও সেলস রিপোর্ট', defaultLabel: 'Sales Report' },
+    'ADMIN_COUPONS': { name: '🎟️ ADMIN: Discount Coupons', defaultMsg: 'ডিসকাউন্ট কুপন ম্যানেজমেন্ট', defaultLabel: 'Coupons' },
+    'ADMIN_TODAY_STATUS': { name: '📈 ADMIN: Today All Status', defaultMsg: 'আজকের ওভারঅল স্ট্যাটাস রিপোর্ট', defaultLabel: 'Today All Status' },
+    'ADMIN_USER_STATUS': { name: '👤 ADMIN: User Status Check', defaultMsg: 'ইউজার অ্যাকাউন্ট তথ্য ও ব্যালেন্স', defaultLabel: 'User Status Check' },
+    'ADMIN_UPDATE_JOINS': { name: '📡 ADMIN: Update Joins', defaultMsg: 'চ্যানেল/গ্রুপ জয়েনিং লিংক আপডেট', defaultLabel: 'Update Joins' },
+    'ADMIN_LIVE_SERVICES': { name: '🛰️ ADMIN: Live Services', defaultMsg: 'বট সার্ভিসের লাইভ মনিটরিং', defaultLabel: 'Live Services' },
+    'ADMIN_BAN_USER': { name: '⛔ ADMIN: Ban User', defaultMsg: 'ইউজার ব্যান করার অ্যাকশন', defaultLabel: 'Ban User' },
+    'ADMIN_UNBAN_USER': { name: '🔓 ADMIN: Unban User', defaultMsg: 'ইউজার আনব্যান করার অ্যাকশন', defaultLabel: 'Unban User' },
+    'ADMIN_BAN_LIST': { name: '📜 ADMIN: Ban User List', defaultMsg: 'ব্যানড ইউজারের তালিকা প্যানেল', defaultLabel: 'Ban User List' },
+    'ADMIN_ADD_BALANCE': { name: '➕ ADMIN: Add Balance', defaultMsg: 'ইউজার অ্যাকাউন্টে ব্যালেন্স যোগ', defaultLabel: 'Add Balance' },
+    'ADMIN_REMOVE_BALANCE': { name: '➖ ADMIN: Remove Balance', defaultMsg: 'ইউজার অ্যাকাউন্ট থেকে ব্যালেন্স কর্তন', defaultLabel: 'Remove Balance' },
+    'ADMIN_STOCK_MGMT': { name: '📦 ADMIN: Manage Stock', defaultMsg: 'প্যাকেজের স্টক ইন/আউট কন্ট্রোল', defaultLabel: 'Manage Stock' }
+};
+
+async function showCustomizeItemCard(ctx, itemKey) {
+    const item = CUSTOMIZABLE_ITEMS[itemKey] || { name: itemKey, defaultMsg: 'ডিফল্ট টেক্সট', defaultLabel: itemKey };
+    
+    let defaultVal = item.defaultMsg;
+    if (['BKASH', 'NAGAD', 'BINANCE', 'PAYONEER'].includes(itemKey)) {
+        defaultVal = await getWallet(itemKey.toLowerCase());
+    }
+
+    const label = await getCustomText(`LABEL_${itemKey}`, item.defaultLabel);
+    const msg = await getCustomText(`MSG_${itemKey}`, defaultVal);
+    const emojiId = await getCustomText(`EMOJIID_${itemKey}`, '');
+    const emojiTag = await getItemEmojiTag(itemKey, '💡');
+
+    const cardText = 
+        `🛠️ <b>CUSTOMIZING: ${item.name}</b>\n` +
+        `🏷️ <b>Key ID:</b> <code>${itemKey}</code>\n` +
+        `━━━━━━━━━━━━━━━━━━\n\n` +
+        `🏷️ <b>Label (BN):</b> ${label}\n\n` +
+        `📝 <b>Msg (BN):</b>\n` +
+        `" ${emojiTag} ${msg} "\n\n` +
+        `✨ <b>Premium Emoji ID:</b>\n` +
+        `<code>${emojiId || 'Not Set (ডিফল্ট)'}</code> ${emojiTag}\n\n` +
+        `ℹ️ <i>মেসেজের শুরুতে প্রিমিয়াম ইমোজি সংযুক্ত হচ্ছে।</i>\n\n` +
+        `👇 <i>আপনি যা পরিবর্তন করতে চান তা নিচে থেকে সিলেক্ট করুন:</i>`;
+
+    const keyboard = Markup.inlineKeyboard([
+        [
+            Markup.button.callback('🏷️ Edit Label', `edit_item_label_${itemKey}`),
+            Markup.button.callback('📝 Edit Message', `edit_item_msg_${itemKey}`)
+        ],
+        [
+            Markup.button.callback('✨ Edit Premium Emoji ID', `edit_item_emojiid_${itemKey}`)
+        ],
+        [
+            Markup.button.callback('🔙 Back to Customization', 'admin_customize_texts')
+        ]
+    ]);
+
+    if (ctx.callbackQuery) {
+        try {
+            await ctx.editMessageText(cardText, { parse_mode: 'HTML', ...keyboard });
+        } catch(e) {
+            await ctx.reply(cardText, { parse_mode: 'HTML', ...keyboard });
+        }
+    } else {
+        await ctx.reply(cardText, { parse_mode: 'HTML', ...keyboard });
+    }
+}
+
+bot.action(/^admin_customize_texts(?:_page_(\d+))?$/, async (ctx) => {
+    if (!isAdmin(ctx)) return ctx.answerCbQuery("Unauthorized!", { show_alert: true });
+    await ctx.answerCbQuery();
+
+    const page = parseInt(ctx.match[1] || '1');
+    const itemsPerPage = 8;
+    const keys = Object.keys(CUSTOMIZABLE_ITEMS);
+    const totalPages = Math.ceil(keys.length / itemsPerPage);
+    const startIdx = (page - 1) * itemsPerPage;
+    const currentKeys = keys.slice(startIdx, startIdx + itemsPerPage);
+
+    const inlineButtons = currentKeys.map(k => [
+        Markup.button.callback(CUSTOMIZABLE_ITEMS[k].name, `cust_card_${k}`)
+    ]);
+
+    const navRow = [];
+    if (page > 1) {
+        navRow.push(Markup.button.callback('⬅️ Previous Page', `admin_customize_texts_page_${page - 1}`));
+    }
+    if (page < totalPages) {
+        navRow.push(Markup.button.callback('Next Page ➡️', `admin_customize_texts_page_${page + 1}`));
+    }
+    if (navRow.length > 0) {
+        inlineButtons.push(navRow);
+    }
+
+    inlineButtons.push([Markup.button.callback('🔙 Back to Management', 'open_admin_mgmt_menu')]);
+
+    const textMsg = `📝 *Customize Bot & Admin Buttons Panel* (Page ${page}/${totalPages})\n\n` +
+                    `বটের মোট **${keys.length}টি বাটন ও ফিচার টাইটেলের** তালিকা নিচে দেওয়া হলো। যে বাটনটি কাস্টমাইজ করতে চান সেটিতে ক্লিক করুন:`;
+
+    if (ctx.callbackQuery) {
+        try {
+            await ctx.editMessageText(textMsg, { parse_mode: 'Markdown', ...Markup.inlineKeyboard(inlineButtons) });
+        } catch(e) {
+            await ctx.reply(textMsg, { parse_mode: 'Markdown', ...Markup.inlineKeyboard(inlineButtons) });
+        }
+    } else {
+        await ctx.reply(textMsg, { parse_mode: 'Markdown', ...Markup.inlineKeyboard(inlineButtons) });
+    }
+});
+
+bot.action(/^cust_card_(.+)$/, async (ctx) => {
+    if (!isAdmin(ctx)) return ctx.answerCbQuery("Unauthorized!", { show_alert: true });
+    await ctx.answerCbQuery();
+    const itemKey = ctx.match[1];
+    return showCustomizeItemCard(ctx, itemKey);
+});
+
+bot.action(/^edit_item_(label|msg|emojiid)_(.+)$/, async (ctx) => {
+    if (!isAdmin(ctx)) return ctx.answerCbQuery("Unauthorized!", { show_alert: true });
+    await ctx.answerCbQuery();
+    const field = ctx.match[1];
+    const itemKey = ctx.match[2];
+    const adminId = ctx.from.id.toString();
+    await updateAdminSession(adminId, { step: `waiting_for_card_${field}_${itemKey}` });
+    
+    if (field === 'label') {
+        return ctx.reply(`🏷️ *Edit Label for ${itemKey}*\n\nনতুন **Label / বাটন নাম** লিখে পাঠান:`, { parse_mode: 'Markdown' });
+    } else if (field === 'msg') {
+        return ctx.reply(`📝 *Edit Message for ${itemKey}*\n\nনতুন **Message / টেক্সট বিবরণ** লিখে পাঠান:`, { parse_mode: 'Markdown' });
+    } else if (field === 'emojiid') {
+        return ctx.reply(`✨ *Edit Premium Emoji ID for ${itemKey}*\n\nনতুন **Telegram Premium Emoji ID** লিখে পাঠান (যেমন: \`6206112371308500200\`):`, { parse_mode: 'Markdown' });
+    }
+});
+
+bot.action('edit_welcome_msg', async (ctx) => {
+    if (!isAdmin(ctx)) return ctx.answerCbQuery("Unauthorized!", { show_alert: true });
+    await ctx.answerCbQuery();
+    await updateAdminSession(ctx.from.id.toString(), { step: 'waiting_for_welcome_msg' });
+    return ctx.reply("💎 *Edit Welcome Message*\n\nনতুন **Welcome Message** লিখে পাঠান (ইউজারের নাম দেখাতে `{name}` ব্যবহার করতে পারেন):", { parse_mode: 'Markdown' });
+});
+
+bot.action('edit_buy_now_title', async (ctx) => {
+    if (!isAdmin(ctx)) return ctx.answerCbQuery("Unauthorized!", { show_alert: true });
+    await ctx.answerCbQuery();
+    await updateAdminSession(ctx.from.id.toString(), { step: 'waiting_for_buy_now_title' });
+    return ctx.reply("🛒 *Edit Buy Now Title*\n\nনতুন **Buy Now/প্যাকেজ টেক্সট** লিখে পাঠান:", { parse_mode: 'Markdown' });
+});
+
+bot.action('edit_profile_title', async (ctx) => {
+    if (!isAdmin(ctx)) return ctx.answerCbQuery("Unauthorized!", { show_alert: true });
+    await ctx.answerCbQuery();
+    await updateAdminSession(ctx.from.id.toString(), { step: 'waiting_for_profile_title' });
+    return ctx.reply("👤 *Edit Profile Title*\n\nনতুন **Profile টেক্সট** লিখে পাঠান:", { parse_mode: 'Markdown' });
+});
+
+bot.action('edit_my_order_title', async (ctx) => {
+    if (!isAdmin(ctx)) return ctx.answerCbQuery("Unauthorized!", { show_alert: true });
+    await ctx.answerCbQuery();
+    await updateAdminSession(ctx.from.id.toString(), { step: 'waiting_for_my_order_title' });
+    return ctx.reply("🛍 *Edit My Order Title*\n\nনতুন **My Order টেক্সট** লিখে পাঠান:", { parse_mode: 'Markdown' });
+});
+
+bot.action('edit_faq_text', async (ctx) => {
+    if (!isAdmin(ctx)) return ctx.answerCbQuery("Unauthorized!", { show_alert: true });
+    await ctx.answerCbQuery();
+    await updateAdminSession(ctx.from.id.toString(), { step: 'waiting_for_faq_text' });
+    return ctx.reply("❓ *Edit FAQ Text*\n\nনতুন **FAQ & Help Guide টেক্সট** লিখে পাঠান:", { parse_mode: 'Markdown' });
+});
+
+bot.action('edit_leaderboard_title', async (ctx) => {
+    if (!isAdmin(ctx)) return ctx.answerCbQuery("Unauthorized!", { show_alert: true });
+    await ctx.answerCbQuery();
+    await updateAdminSession(ctx.from.id.toString(), { step: 'waiting_for_leaderboard_title' });
+    return ctx.reply("🏆 *Edit Leaderboard Title*\n\nনতুন **Leaderboard টেক্সট** লিখে পাঠান:", { parse_mode: 'Markdown' });
+});
+
+bot.action('edit_support_username', async (ctx) => {
+    if (!isAdmin(ctx)) return ctx.answerCbQuery("Unauthorized!", { show_alert: true });
+    await ctx.answerCbQuery();
+    await updateAdminSession(ctx.from.id.toString(), { step: 'waiting_for_support_username' });
+    return ctx.reply("📞 *Edit Support Admin Username*\n\nনতুন **Admin Username** লিখে পাঠান (যেমন: `@prime8088`):", { parse_mode: 'Markdown' });
+});
+
+bot.action('admin_ban_user', async (ctx) => {
+    if (!isAdmin(ctx)) return ctx.answerCbQuery("Unauthorized!", { show_alert: true });
+    await ctx.answerCbQuery();
+    const adminId = ctx.from.id.toString();
+    await updateAdminSession(adminId, { step: 'waiting_for_ban_user_id' });
+    return ctx.reply("⛔ *Ban User*\n\nযে ইউজারকে ব্যান করতে চান তার **Telegram User ID** লিখুন:", { parse_mode: 'Markdown' });
+});
+
+bot.action('admin_unban_user', async (ctx) => {
+    if (!isAdmin(ctx)) return ctx.answerCbQuery("Unauthorized!", { show_alert: true });
+    await ctx.answerCbQuery();
+    const adminId = ctx.from.id.toString();
+    await updateAdminSession(adminId, { step: 'waiting_for_unban_user_id' });
+    return ctx.reply("🔓 *Unban User*\n\nযে ইউজারকে আনব্যান করতে চান তার **Telegram User ID** লিখুন:", { parse_mode: 'Markdown' });
+});
+
+bot.action('admin_ban_list', async (ctx) => {
+    if (!isAdmin(ctx)) return ctx.answerCbQuery("Unauthorized!", { show_alert: true });
+    await ctx.answerCbQuery();
+
+    const bannedList = await db.getAllBannedUsers();
+    if (!bannedList || bannedList.length === 0) {
+        const emptyMsg = `📜 *Banned Users List*\n\nবর্তমানে কোনো ইউজার ব্যান তালিকায় নেই। 🟢`;
+        return ctx.editMessageText(emptyMsg, {
+            parse_mode: 'Markdown',
+            ...Markup.inlineKeyboard([[Markup.button.callback('🔙 Back to Management', 'open_admin_mgmt_menu')]])
+        });
+    }
+
+    let listText = `📜 *Banned Users List (${bannedList.length})*\n\n`;
+    const buttons = [];
+    bannedList.forEach(id => {
+        listText += `• User ID: \`${id}\`\n`;
+        buttons.push([Markup.button.callback(`🔓 Unban User ${id}`, `unban_id_${id}`)]);
+    });
+
+    buttons.push([Markup.button.callback('🔙 Back to Management', 'open_admin_mgmt_menu')]);
+
+    return ctx.editMessageText(listText, { parse_mode: 'Markdown', ...Markup.inlineKeyboard(buttons) });
+});
+
+bot.action(/^ban_id_(\d+)$/, async (ctx) => {
+    if (!isAdmin(ctx)) return ctx.answerCbQuery("Unauthorized!", { show_alert: true });
+    const targetId = ctx.match[1];
+    await db.banUser(targetId);
+    await ctx.answerCbQuery(`User ${targetId} Banned!`);
+    return ctx.reply(`⛔ ইউজার ID \`${targetId}\` কে সফলভাবে **ব্যান** করা হয়েছে!`, { parse_mode: 'Markdown' });
+});
+
+bot.action(/^unban_id_(\d+)$/, async (ctx) => {
+    if (!isAdmin(ctx)) return ctx.answerCbQuery("Unauthorized!", { show_alert: true });
+    const targetId = ctx.match[1];
+    await db.unbanUser(targetId);
+    await ctx.answerCbQuery(`User ${targetId} Unbanned!`);
+    return ctx.reply(`🔓 ইউজার ID \`${targetId}\` কে সফলভাবে **আনব্যান** করা হয়েছে!`, { parse_mode: 'Markdown' });
+});
+
+bot.action('admin_add_balance', async (ctx) => {
+    if (!isAdmin(ctx)) return ctx.answerCbQuery("Unauthorized!", { show_alert: true });
+    await ctx.answerCbQuery();
+    const adminId = ctx.from.id.toString();
+    await updateAdminSession(adminId, { step: 'waiting_for_add_balance' });
+    return ctx.reply("➕ *Add User Balance*\n\nইউজার ID এবং টাকার পরিমাণ স্পেস দিয়ে লিখে পাঠান:\n*(ফরম্যাট: `User_ID Amount` - যেমন: `1262396547 500`)*", { parse_mode: 'Markdown' });
+});
+
+bot.action('admin_remove_balance', async (ctx) => {
+    if (!isAdmin(ctx)) return ctx.answerCbQuery("Unauthorized!", { show_alert: true });
+    await ctx.answerCbQuery();
+    const adminId = ctx.from.id.toString();
+    await updateAdminSession(adminId, { step: 'waiting_for_remove_balance' });
+    return ctx.reply("➖ *Remove User Balance*\n\nইউজার ID এবং টাকার পরিমাণ স্পেস দিয়ে লিখে পাঠান:\n*(ফরম্যাট: `User_ID Amount` - যেমন: `1262396547 100`)*", { parse_mode: 'Markdown' });
+});
+
+bot.action('admin_pending_orders', async (ctx) => {
+    if (!isAdmin(ctx)) return ctx.answerCbQuery("Unauthorized!", { show_alert: true });
+    await ctx.answerCbQuery();
+    return showPendingOrdersMenu(ctx);
+});
+
+bot.action('admin_total_users', async (ctx) => {
+    if (!isAdmin(ctx)) return ctx.answerCbQuery("Unauthorized!", { show_alert: true });
+    await ctx.answerCbQuery();
+    return showTotalUsersStats(ctx);
+});
+
+bot.action('admin_broadcast_prompt', async (ctx) => {
+    if (!isAdmin(ctx)) return ctx.answerCbQuery("Unauthorized!", { show_alert: true });
+    await ctx.answerCbQuery();
+    const adminId = ctx.from.id.toString();
+    await updateAdminSession(adminId, { step: 'waiting_for_broadcast' });
+    return ctx.reply("📢 *Broadcast Message*\n\nআপনার ব্রডকাস্ট মেসেজটি (লেখা বা ছবি) পাঠান যা সকল ইউজারের কাছে একসাথে চলে যাবে:", { parse_mode: 'Markdown' });
+});
+
+bot.action('admin_coupons_menu', async (ctx) => {
+    if (!isAdmin(ctx)) return ctx.answerCbQuery("Unauthorized!", { show_alert: true });
+    await ctx.answerCbQuery();
+    return showCouponsMenu(ctx);
+});
+
+bot.action('admin_sales_report', async (ctx) => {
+    if (!isAdmin(ctx)) return ctx.answerCbQuery("Unauthorized!", { show_alert: true });
+    await ctx.answerCbQuery();
+    const stats = await getSalesReportStats();
+    const reportText = 
+        `📊 *AdsPower Bot Sales Report* 📊\n\n` +
+        `• Total Completed Sales: *${stats.totalCount}*\n` +
+        `• Total Revenue: *${stats.totalRevenue} TK*\n\n` +
+        `• Today's Sales: *${stats.todayRevenue} TK*\n` +
+        `• This Month's Sales: *${stats.monthRevenue} TK*\n\n` +
+        `❤️ Keep hustling! Keep selling! 🚀`;
+    return ctx.reply(reportText, { 
+        parse_mode: 'Markdown',
+        ...Markup.inlineKeyboard([
+            [Markup.button.callback('📥 Download CSV Report', 'download_sales_csv')],
+            [Markup.button.callback('🔙 Back to Management', 'open_admin_mgmt_menu')]
+        ])
+    });
+});
+
+bot.action('admin_close', async (ctx) => {
+    if (!isAdmin(ctx)) return ctx.answerCbQuery("Unauthorized!", { show_alert: true });
+    await ctx.answerCbQuery("Admin Panel Closed.");
+    try {
+        await ctx.deleteMessage();
+    } catch(e) {}
+});
+
 async function runExpiryCheck(req, res) {
     try {
         if (!db.isConfigured()) {
@@ -3155,11 +4449,15 @@ module.exports = async (req, res) => {
                 return res.status(200).json({ status: "success", message: "Fake sale triggered." });
             }
 
-            // Set bot slash commands list in Telegram
+            // Set bot slash commands list in Telegram and auto-register Webhook URL
             await bot.telegram.setMyCommands([
                 { command: 'start', description: 'Start the bot / প্রধান মেনু 🚀' }
             ]);
-            res.status(200).json({ message: 'AdsPower Bot is running successfully and commands are set!' });
+            if (req.headers.host) {
+                const webhookUrl = `https://${req.headers.host}`;
+                await bot.telegram.setWebhook(webhookUrl);
+            }
+            res.status(200).json({ message: 'AdsPower Bot is running successfully, commands & webhook set!' });
         } catch (err) {
             console.error("Failed to set commands:", err);
             res.status(200).json({ message: 'AdsPower Bot is running successfully!' });
@@ -3167,17 +4465,29 @@ module.exports = async (req, res) => {
     }
 };
 
-// Start persistent launch if run directly (VPS / Local Hosting)
+// Catch Telegraf errors to prevent process crash on network glitches
+bot.catch((err, ctx) => {
+    console.error(`Telegraf error for ${ctx ? ctx.updateType : 'unknown'}:`, err.message);
+});
+
+// Start persistent launch if run directly (VPS / Local Hosting) with auto-retry
+async function launchWithRetry() {
+    try {
+        await bot.launch();
+        console.log("Bot launched in persistent mode!");
+        setInterval(async () => {
+            await sendFakeSaleToGroup();
+        }, 30000);
+    } catch (err) {
+        console.error("Bot launch failed (network timeout), retrying in 5 seconds...", err.message);
+        setTimeout(launchWithRetry, 5000);
+    }
+}
+
 try {
     const isDirectRun = (typeof require !== 'undefined' && require.main === module);
     if (isDirectRun || process.env.PERSISTENT === 'true') {
-        bot.launch().then(() => {
-            console.log("Bot launched in persistent mode!");
-            // Persistent 30s interval for fake sales
-            setInterval(async () => {
-                await sendFakeSaleToGroup();
-            }, 30000);
-        });
+        launchWithRetry();
     }
 } catch (e) {
     console.error("Failed to check direct run mode:", e.message);
