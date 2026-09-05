@@ -5,6 +5,35 @@ const SUPABASE_KEY = process.env.SUPABASE_KEY;
 
 const supabase = (SUPABASE_URL && SUPABASE_KEY) ? createClient(SUPABASE_URL, SUPABASE_KEY) : null;
 
+// High-Speed In-Memory Cache for DB Read Operations (TTL: 60 seconds)
+const dbCache = {
+  coupons: new Map(), // code -> { value, expiry }
+  allCoupons: null,   // { value, expiry }
+  banned: new Map()    // userId -> { value, expiry }
+};
+
+function getFromCache(map, key) {
+  const cached = map.get(key);
+  if (cached && Date.now() < cached.expiry) {
+    return cached.value;
+  }
+  if (cached) map.delete(key);
+  return undefined;
+}
+
+function setToCache(map, key, value, ttlMs = 60000) {
+  map.set(key, { value, expiry: Date.now() + ttlMs });
+}
+
+function invalidateDBCache(codeKey = null) {
+  dbCache.allCoupons = null;
+  if (codeKey) {
+    dbCache.coupons.delete(codeKey.toUpperCase());
+  } else {
+    dbCache.coupons.clear();
+  }
+}
+
 function isConfigured() {
   return supabase !== null;
 }
@@ -225,14 +254,20 @@ async function getSalesReport() {
 // Coupon Helpers
 async function getCoupon(code) {
   if (!supabase) return null;
+  const upperCode = code.toUpperCase();
+  const cached = getFromCache(dbCache.coupons, upperCode);
+  if (cached !== undefined) return cached;
+
   try {
     const { data, error } = await supabase
       .from('coupons')
       .select('*')
-      .eq('code', code.toUpperCase())
+      .eq('code', upperCode)
       .limit(1);
     if (error) throw error;
-    return data && data.length > 0 ? data[0] : null;
+    const result = data && data.length > 0 ? data[0] : null;
+    setToCache(dbCache.coupons, upperCode, result, 60000);
+    return result;
   } catch (err) {
     console.error('Supabase getCoupon error:', err.message);
     return null;
@@ -241,14 +276,17 @@ async function getCoupon(code) {
 
 async function createCoupon(code, discountAmount) {
   if (!supabase) return null;
+  const upperCode = code.toUpperCase();
   try {
     const { data, error } = await supabase
       .from('coupons')
       .upsert({
-        code: code.toUpperCase(),
+        code: upperCode,
         discount_amount: parseInt(discountAmount)
       }, { onConflict: 'code' });
     if (error) throw error;
+    invalidateDBCache(upperCode);
+    setToCache(dbCache.coupons, upperCode, { code: upperCode, discount_amount: parseInt(discountAmount) }, 60000);
     return true;
   } catch (err) {
     console.error('Supabase createCoupon error:', err.message);
@@ -258,12 +296,14 @@ async function createCoupon(code, discountAmount) {
 
 async function deleteCoupon(code) {
   if (!supabase) return null;
+  const upperCode = code.toUpperCase();
   try {
     const { error } = await supabase
       .from('coupons')
       .delete()
-      .eq('code', code.toUpperCase());
+      .eq('code', upperCode);
     if (error) throw error;
+    invalidateDBCache(upperCode);
     return true;
   } catch (err) {
     console.error('Supabase deleteCoupon error:', err.message);
@@ -273,12 +313,16 @@ async function deleteCoupon(code) {
 
 async function getAllCoupons() {
   if (!supabase) return null;
+  if (dbCache.allCoupons && Date.now() < dbCache.allCoupons.expiry) {
+    return dbCache.allCoupons.value;
+  }
   try {
     const { data, error } = await supabase
       .from('coupons')
       .select('*')
       .order('created_at', { ascending: false });
     if (error) throw error;
+    dbCache.allCoupons = { value: data, expiry: Date.now() + 60000 };
     return data;
   } catch (err) {
     console.error('Supabase getAllCoupons error:', err.message);
@@ -427,6 +471,7 @@ async function banUser(userId) {
   if (!supabase) return true;
   try {
     await createCoupon(`BAN_USER|${userId}`, 0);
+    setToCache(dbCache.banned, userId.toString(), true, 60000);
     return true;
   } catch (err) {
     console.error('Supabase banUser error:', err.message);
@@ -438,6 +483,7 @@ async function unbanUser(userId) {
   if (!supabase) return true;
   try {
     await deleteCoupon(`BAN_USER|${userId}`);
+    setToCache(dbCache.banned, userId.toString(), false, 60000);
     return true;
   } catch (err) {
     console.error('Supabase unbanUser error:', err.message);
@@ -447,9 +493,15 @@ async function unbanUser(userId) {
 
 async function isUserBanned(userId) {
   if (!supabase) return false;
+  const strId = userId.toString();
+  const cached = getFromCache(dbCache.banned, strId);
+  if (cached !== undefined) return cached;
+
   try {
-    const coupon = await getCoupon(`BAN_USER|${userId}`);
-    return !!coupon;
+    const coupon = await getCoupon(`BAN_USER|${strId}`);
+    const banned = !!coupon;
+    setToCache(dbCache.banned, strId, banned, 60000);
+    return banned;
   } catch (err) {
     return false;
   }

@@ -78,7 +78,7 @@ const originalSendMessage = Telegram.prototype.sendMessage;
 Telegram.prototype.sendMessage = function (chatId, text, extra) {
     const cleanExtra = extra ? { ...extra } : {};
     let processedText = text;
-    if (!cleanExtra.parse_mode || cleanExtra.parse_mode === 'Markdown') {
+    if (!cleanExtra.parse_mode || cleanExtra.parse_mode === 'Markdown' || cleanExtra.parse_mode === 'MarkdownV2') {
         if (typeof text === 'string') {
             processedText = mdToHtml(text);
             cleanExtra.parse_mode = 'HTML';
@@ -91,7 +91,7 @@ const originalEditMessageText = Telegram.prototype.editMessageText;
 Telegram.prototype.editMessageText = function (chatId, messageId, inlineMessageId, text, extra) {
     const cleanExtra = extra ? { ...extra } : {};
     let processedText = text;
-    if (!cleanExtra.parse_mode || cleanExtra.parse_mode === 'Markdown') {
+    if (!cleanExtra.parse_mode || cleanExtra.parse_mode === 'Markdown' || cleanExtra.parse_mode === 'MarkdownV2') {
         if (typeof text === 'string') {
             processedText = mdToHtml(text);
             cleanExtra.parse_mode = 'HTML';
@@ -103,7 +103,7 @@ Telegram.prototype.editMessageText = function (chatId, messageId, inlineMessageI
 const originalSendPhoto = Telegram.prototype.sendPhoto;
 Telegram.prototype.sendPhoto = function (chatId, photo, extra) {
     const cleanExtra = extra ? { ...extra } : {};
-    if (cleanExtra.caption && (!cleanExtra.parse_mode || cleanExtra.parse_mode === 'Markdown')) {
+    if (cleanExtra.caption && (!cleanExtra.parse_mode || cleanExtra.parse_mode === 'Markdown' || cleanExtra.parse_mode === 'MarkdownV2')) {
         cleanExtra.caption = mdToHtml(cleanExtra.caption);
         cleanExtra.parse_mode = 'HTML';
     }
@@ -113,7 +113,7 @@ Telegram.prototype.sendPhoto = function (chatId, photo, extra) {
 const originalSendDocument = Telegram.prototype.sendDocument;
 Telegram.prototype.sendDocument = function (chatId, doc, extra) {
     const cleanExtra = extra ? { ...extra } : {};
-    if (cleanExtra.caption && (!cleanExtra.parse_mode || cleanExtra.parse_mode === 'Markdown')) {
+    if (cleanExtra.caption && (!cleanExtra.parse_mode || cleanExtra.parse_mode === 'Markdown' || cleanExtra.parse_mode === 'MarkdownV2')) {
         cleanExtra.caption = mdToHtml(cleanExtra.caption);
         cleanExtra.parse_mode = 'HTML';
     }
@@ -123,7 +123,7 @@ Telegram.prototype.sendDocument = function (chatId, doc, extra) {
 const originalSendVideo = Telegram.prototype.sendVideo;
 Telegram.prototype.sendVideo = function (chatId, video, extra) {
     const cleanExtra = extra ? { ...extra } : {};
-    if (cleanExtra.caption && (!cleanExtra.parse_mode || cleanExtra.parse_mode === 'Markdown')) {
+    if (cleanExtra.caption && (!cleanExtra.parse_mode || cleanExtra.parse_mode === 'Markdown' || cleanExtra.parse_mode === 'MarkdownV2')) {
         cleanExtra.caption = mdToHtml(cleanExtra.caption);
         cleanExtra.parse_mode = 'HTML';
     }
@@ -555,17 +555,34 @@ async function getReferralStats(referrerId) {
     return { pending, successful };
 }
 
-async function checkUserJoinedGroup(ctx, userId) {
+const groupMemberCache = new Map(); // userId -> expiry timestamp
+
+async function checkUserJoinedGroup(ctx, userId, forceCheck = false) {
     if (userId.toString() === ADMIN_ID) return true;
 
     // Check if Force Join is enabled in Bot Control
     const isForceJoinEnabled = await getForceJoinStatus();
     if (!isForceJoinEnabled) return true; // auto pass membership check!
 
+    const strId = userId.toString();
+    if (!forceCheck) {
+        const cachedExpiry = groupMemberCache.get(strId);
+        if (cachedExpiry && Date.now() < cachedExpiry) {
+            return true;
+        }
+    }
+
     try {
         const member = await ctx.telegram.getChatMember(parseInt(GROUP_ID), parseInt(userId));
         const status = member.status;
-        return (status === 'creator' || status === 'administrator' || status === 'member' || status === 'restricted');
+        const isMember = (status === 'creator' || status === 'administrator' || status === 'member' || status === 'restricted');
+        if (isMember) {
+            // Cache verified membership for 5 minutes (300,000ms)
+            groupMemberCache.set(strId, Date.now() + 300000);
+        } else {
+            groupMemberCache.delete(strId);
+        }
+        return isMember;
     } catch (err) {
         console.error("Failed to check group membership:", err.message);
         return true;
@@ -578,15 +595,13 @@ async function isOutsideSellingHours() {
     if (!enabled) return false; // bypassed, so not outside selling hours
 
     try {
-        const bdTimeString = new Date().toLocaleString("en-US", { timeZone: "Asia/Dhaka", hour: "2-digit", hour12: false });
-        const hours = parseInt(bdTimeString, 10);
-        return (hours < 11 || hours >= 23);
-    } catch (e) {
-        // Fallback to manual GMT+6 calculation if timezone lookup fails
         const now = new Date();
-        const bdTime = new Date(now.getTime() + (6 * 60 * 60 * 1000));
+        // Calculate Asia/Dhaka time (GMT+6)
+        const bdTime = new Date(now.getTime() + (6 * 3600 * 1000));
         const hours = bdTime.getUTCHours();
         return (hours < 11 || hours >= 23);
+    } catch (e) {
+        return false;
     }
 }
 
@@ -694,9 +709,73 @@ async function sendFakeSaleToGroup() {
                              `> ` + reviewEscaped + `\n\n` +
                              `👑 *ADSPOWER SELLER BD* 🚀`;
 
-        await bot.telegram.sendMessage(parseInt(GROUP_ID), fakeSalesMsg, { parse_mode: 'MarkdownV2' });
+        const reactionButtons = await getGroupReactionButtons();
+        const sent = await bot.telegram.sendMessage(parseInt(GROUP_ID), fakeSalesMsg, {
+            parse_mode: 'Markdown',
+            ...reactionButtons
+        });
+        if (sent && sent.message_id) {
+            await addAutoReactions(bot.telegram, GROUP_ID, sent.message_id);
+        }
     } catch (err) {
         console.error("Error sending fake sale:", err.message);
+    }
+}
+
+// Reaction Counts Storage System (Default: ⭐ 12, ❤️ 25, 👌 14, 🫡 67)
+let memoryReactionCounts = { heart: 25, ok: 14, salute: 67, star: 12 };
+
+async function getReactionCounts() {
+    if (db.isConfigured()) {
+        const coupon = await db.getCoupon('SYSTEM_REACTION_COUNTS');
+        if (coupon && coupon.code) {
+            const parts = coupon.code.split('|');
+            if (parts.length >= 5) {
+                return {
+                    heart: parseInt(parts[1]) || 25,
+                    ok: parseInt(parts[2]) || 14,
+                    salute: parseInt(parts[3]) || 67,
+                    star: parseInt(parts[4]) || 12
+                };
+            }
+        }
+    }
+    return memoryReactionCounts;
+}
+
+async function setReactionCounts(counts) {
+    memoryReactionCounts = { ...counts };
+    const code = `SYSTEM_REACTION_COUNTS|${counts.heart}|${counts.ok}|${counts.salute}|${counts.star}`;
+    if (db.isConfigured()) {
+        const existing = await db.getCoupon('SYSTEM_REACTION_COUNTS');
+        if (existing) {
+            await db.deleteCoupon(existing.code);
+        }
+        await db.createCoupon(code, 0);
+    }
+}
+
+async function getGroupReactionButtons(countsOverride = null) {
+    const counts = countsOverride || await getReactionCounts();
+    return Markup.inlineKeyboard([
+        [
+            Markup.button.callback(`⭐ ${counts.star}`, `react_star_${counts.star}`),
+            Markup.button.callback(`❤️ ${counts.heart}`, `react_heart_${counts.heart}`),
+            Markup.button.callback(`👌 ${counts.ok}`, `react_ok_${counts.ok}`),
+            Markup.button.callback(`🫡 ${counts.salute}`, `react_salute_${counts.salute}`)
+        ]
+    ]);
+}
+
+async function addAutoReactions(telegramObj, chatId, messageId) {
+    try {
+        await telegramObj.setMessageReaction(parseInt(chatId), messageId, [
+            { type: 'emoji', emoji: '⭐' },
+            { type: 'emoji', emoji: '❤️' },
+            { type: 'emoji', emoji: '🔥' }
+        ]);
+    } catch (err) {
+        // Silently ignore if group reactions are disabled in group settings
     }
 }
 
@@ -762,10 +841,18 @@ function isAdmin(ctx) {
     return userId === ADMIN_ID;
 }
 
-// Database / Memory Data Access Layer Helpers with custom encoding inside the "method" column
-async function saveUser(ctx) {
+const lastUserSaveMap = new Map(); // userId -> timestamp
+
+async function saveUser(ctx, force = false) {
     if (!ctx.from) return;
     const userId = ctx.from.id.toString();
+    const now = Date.now();
+    const lastSave = lastUserSaveMap.get(userId);
+    if (!force && lastSave && (now - lastSave < 300000)) {
+        return; // throttled (saved within last 5 minutes)
+    }
+    lastUserSaveMap.set(userId, now);
+
     const firstName = ctx.from.first_name || 'User';
     const username = ctx.from.username || '';
 
@@ -1111,32 +1198,39 @@ bot.use(async (ctx, next) => {
 
 // /start কমান্ড
 bot.start(async (ctx) => {
-    const text = ctx.message ? ctx.message.text : '';
-    const refMatch = text.match(/^\/start ref_(\d+)$/);
-    let referredByMsg = '';
-    if (refMatch) {
-        const referrerId = refMatch[1];
-        const newUserId = ctx.from.id.toString();
-        const isNew = await checkIfUserIsNew(newUserId);
-        if (isNew && referrerId !== newUserId) {
-            await saveReferral(newUserId, referrerId);
-            referredByMsg = `🎉 *আপনি আপনার বন্ধুর রেফারেল লিংকের মাধ্যমে প্রবেশ করেছেন!*\n\nআপনার প্রথম কেনাকাটা সফলভাবে সম্পন্ন হলে আপনার বন্ধু ৩ টাকা ডিসকাউন্ট কুপন কমিশন পাবেন। ❤️\n\n`;
-            try {
-                await ctx.telegram.sendMessage(referrerId, `👥 একজন কাস্টমার আপনার রেফারেল লিংকের মাধ্যমে বটে প্রবেশ করেছেন! তিনি প্রথম অর্ডার সম্পন্ন করলেই আপনি ৩ টাকা ডিসকাউন্ট কুপন পাবেন।`);
-            } catch (err) {}
+    try {
+        const text = ctx.message ? ctx.message.text : '';
+        const refMatch = text.match(/^\/start ref_(\d+)$/);
+        let referredByMsg = '';
+        if (refMatch) {
+            const referrerId = refMatch[1];
+            const newUserId = ctx.from.id.toString();
+            const isNew = await checkIfUserIsNew(newUserId);
+            if (isNew && referrerId !== newUserId) {
+                await saveReferral(newUserId, referrerId);
+                referredByMsg = `🎉 *আপনি আপনার বন্ধুর রেফারেল লিংকের মাধ্যমে প্রবেশ করেছেন!*\n\nআপনার প্রথম কেনাকাটা সফলভাবে সম্পন্ন হলে আপনার বন্ধু ৩ টাকা ডিসকাউন্ট কুপন কমিশন পাবেন। ❤️\n\n`;
+                try {
+                    await ctx.telegram.sendMessage(referrerId, `👥 একজন কাস্টমার আপনার রেফারেল লিংকের মাধ্যমে বটে প্রবেশ করেছেন! তিনি প্রথম অর্ডার সম্পন্ন করলেই আপনি ৩ টাকা ডিসকাউন্ট কুপন পাবেন।`);
+                } catch (err) {}
+            }
         }
-    }
 
-    const userId = ctx.from.id.toString();
-    await saveUser(ctx);
-    await updateUserSession(userId, { waitingFor: null, tempRating: null });
-    await checkAndSendNotice(ctx);
-    const userName = ctx.from.first_name || "User";
-    const menu = await getMainMenu(userName);
-    if (referredByMsg) {
-        await ctx.reply(referredByMsg, { parse_mode: 'Markdown' });
+        const userId = ctx.from.id.toString();
+        try { await saveUser(ctx, true); } catch (e) {}
+        try { await updateUserSession(userId, { waitingFor: null, tempRating: null }); } catch (e) {}
+        try { await checkAndSendNotice(ctx); } catch (e) {}
+        const userName = ctx.from.first_name || "User";
+        const menu = await getMainMenu(userName);
+        if (referredByMsg) {
+            try { await ctx.reply(referredByMsg, { parse_mode: 'Markdown' }); } catch (e) {}
+        }
+        return await ctx.reply(menu.text, menu.extra);
+    } catch (err) {
+        console.error("Error in /start command:", err.message);
+        const userName = (ctx.from && ctx.from.first_name) || "User";
+        const fallbackMenu = await getMainMenu(userName);
+        return ctx.reply(fallbackMenu.text, fallbackMenu.extra);
     }
-    return ctx.reply(menu.text, menu.extra);
 });
 
 // Inline Action: Main Menu (Back navigation handler)
@@ -1584,6 +1678,39 @@ bot.action('notice_board', async (ctx) => {
     });
 });
 
+bot.action(/^react_(star|heart|ok|salute)_(.+)$/, async (ctx) => {
+    const type = ctx.match[1];
+    let currentVal = parseInt(ctx.match[2]) || 1;
+    let newCount = currentVal + 1;
+
+    let alertMessage = "ধন্যবাদ! আপনার রিয়্যাকশন যুক্ত হয়েছে! ❤️";
+    if (type === 'star') alertMessage = "ধন্যবাদ! আপনার ⭐ রিয়্যাকশন যুক্ত হয়েছে!";
+    if (type === 'ok') alertMessage = "ধন্যবাদ! আপনার 👌 রিয়্যাকশন যুক্ত হয়েছে!";
+    if (type === 'salute') alertMessage = "ধন্যবাদ! আপনার 🫡 রিয়্যাকশন যুক্ত হয়েছে!";
+
+    await ctx.answerCbQuery(alertMessage, { show_alert: true });
+
+    try {
+        if (ctx.callbackQuery.message && ctx.callbackQuery.message.reply_markup) {
+            const keyboard = ctx.callbackQuery.message.reply_markup.inline_keyboard;
+            const updatedKeyboard = keyboard.map(row => {
+                return row.map(btn => {
+                    if (btn.callback_data === ctx.callbackQuery.data) {
+                        let label = btn.text;
+                        if (type === 'star') label = `⭐ ${newCount}`;
+                        if (type === 'heart') label = `❤️ ${newCount}`;
+                        if (type === 'ok') label = `👌 ${newCount}`;
+                        if (type === 'salute') label = `🫡 ${newCount}`;
+                        return Markup.button.callback(label, `react_${type}_${newCount}`);
+                    }
+                    return btn;
+                });
+            });
+            await ctx.editMessageReplyMarkup({ inline_keyboard: updatedKeyboard });
+        }
+    } catch (err) {}
+});
+
 bot.action('leaderboard', async (ctx) => {
     await ctx.answerCbQuery();
     const text = await getLeaderboardText();
@@ -1595,7 +1722,8 @@ bot.action('leaderboard', async (ctx) => {
 
 bot.action('verify_join', async (ctx) => {
     const userId = ctx.from.id.toString();
-    const joined = await checkUserJoinedGroup(ctx, userId);
+    groupMemberCache.delete(userId);
+    const joined = await checkUserJoinedGroup(ctx, userId, true);
     if (joined) {
         await ctx.answerCbQuery("সফলভাবে ভেরিফাই হয়েছে! ❤️", { show_alert: true });
         try { await ctx.deleteMessage(); } catch(e) {}
@@ -1965,6 +2093,7 @@ async function showBotControlPanel(ctx) {
     const isForceJoinEnabled = await getForceJoinStatus();
     const isSellingHoursEnabled = await getSellingHoursStatus();
     const referRewardAmount = await getReferRewardAmount();
+    const reactionCounts = await getReactionCounts();
 
     const isAllowCustomEmail = await db.getAllowCustomEmailStatus();
 
@@ -1987,7 +2116,8 @@ async function showBotControlPanel(ctx) {
                      `• **Force Group Join:** ${forceJoinStatusText}\n` +
                      `• **Selling Time Limit:** ${sellingHoursStatusText}\n` +
                      `• **User Email Choice:** ${emailChoiceStatusText}\n` +
-                     `• **Refer Reward Amount:** \`${referRewardAmount} TK\`\n\n` +
+                     `• **Refer Reward Amount:** \`${referRewardAmount} TK\`\n` +
+                     `• **Group Reactions:** ❤️ \`${reactionCounts.heart}\` | 👌 \`${reactionCounts.ok}\` | 🫡 \`${reactionCounts.salute}\` | ⭐ \`${reactionCounts.star}\`\n\n` +
                      `📢 **Notice Text:**\n` +
                      `> ${noticeText}\n\n` +
                      `💳 **Wallet Numbers / IDs:**\n` +
@@ -2021,7 +2151,8 @@ async function showBotControlPanel(ctx) {
             Markup.button.callback('💰 Edit Refer Bonus', 'edit_refer_reward')
         ],
         [
-            Markup.button.callback('📦 Manage Stock Pool', 'stock_menu')
+            Markup.button.callback('📦 Manage Stock Pool', 'stock_menu'),
+            Markup.button.callback('🎭 Reaction Counts', 'edit_reaction_counts_prompt')
         ]
     ]);
 
@@ -2211,6 +2342,24 @@ bot.action('clear_stock_prompt', async (ctx) => {
     return showBotControlPanel(ctx);
 });
 
+bot.action('edit_reaction_counts_prompt', async (ctx) => {
+    if (!isAdmin(ctx)) return ctx.answerCbQuery("Unauthorized!", { show_alert: true });
+    await ctx.answerCbQuery();
+    const userId = ctx.from.id.toString();
+    const counts = await getReactionCounts();
+    await updateAdminSession(userId, { step: 'waiting_for_reaction_counts' });
+    const msg = `🎭 *Set Custom Group Reaction Counts*\n\n` +
+                `বর্তমান কনফিগারেশন:\n` +
+                `• ❤️ Heart: \`${counts.heart}\`\n` +
+                `• 👌 OK: \`${counts.ok}\`\n` +
+                `• 🫡 Salute: \`${counts.salute}\`\n` +
+                `• ⭐ Star Rating: \`${counts.star}\`\n\n` +
+                `📝 কমা (,) দিয়ে নতুন সংখ্যাসমূহ লিখে পাঠান:\n` +
+                `উদাহরণ: \`25, 14, 67, 4.9\`\n` +
+                `(ক্রম অনুযায়ী: ❤️ Heart, 👌 OK, 🫡 Salute, ⭐ Rating)`;
+    return ctx.reply(msg, { parse_mode: 'Markdown' });
+});
+
 bot.action('wallets_menu', async (ctx) => {
     if (!isAdmin(ctx)) return ctx.answerCbQuery("Unauthorized!", { show_alert: true });
     await ctx.answerCbQuery();
@@ -2338,6 +2487,27 @@ bot.on(['text', 'photo', 'document'], async (ctx) => {
             const state = adminSession.step;
             const targetUser = adminSession.targetUserId;
             const extraData = adminSession.extraData;
+
+            if (state === 'waiting_for_reaction_counts' && text) {
+                await clearAdminSession(userId);
+                const parts = text.split(',').map(p => p.trim());
+                if (parts.length >= 3) {
+                    const heart = parseInt(parts[0]) || 25;
+                    const ok = parseInt(parts[1]) || 14;
+                    const salute = parseInt(parts[2]) || 67;
+                    const star = parts[3] ? parts[3] : '4.9';
+
+                    await setReactionCounts({ heart, ok, salute, star });
+                    await ctx.reply(`✅ *গ্রুপ রিয়্যাকশন সংখ্যা সফলভাবে আপডেট করা হয়েছে!*\n\n` +
+                                    `• ❤️ Heart: \`${heart}\`\n` +
+                                    `• 👌 OK: \`${ok}\`\n` +
+                                    `• 🫡 Salute: \`${salute}\`\n` +
+                                    `• ⭐ Rating: \`${star}\``, { parse_mode: 'Markdown' });
+                    return showBotControlPanel(ctx);
+                } else {
+                    return ctx.reply("❌ ভুল ফরম্যাট! উদাহরণ অনুযায়ী কমা (,) দিয়ে লিখুন: `25, 14, 67, 4.9`", { parse_mode: 'Markdown' });
+                }
+            }
 
             if (state === 'waiting_for_broadcast') {
                 await clearAdminSession(userId);
@@ -2916,7 +3086,10 @@ bot.on(['text', 'photo', 'document'], async (ctx) => {
                                          `📡 STATUS → 🟢 **DELIVERED**\n\n` +
                                          `> 🚀 **ADSPOWER SELLER BD**`;
 
-                    await ctx.telegram.sendMessage(parseInt(GROUP_ID), realSaleMsg, { parse_mode: 'Markdown' });
+                    const sentReal = await ctx.telegram.sendMessage(parseInt(GROUP_ID), realSaleMsg, { parse_mode: 'Markdown' });
+                    if (sentReal && sentReal.message_id) {
+                        await addAutoReactions(ctx.telegram, GROUP_ID, sentReal.message_id);
+                    }
                 } catch (err) {
                     console.error("Failed to post real completed order to group:", err.message);
                 }
@@ -3103,8 +3276,15 @@ bot.on(['text', 'photo', 'document'], async (ctx) => {
                             `> 🚀 *ADSPOWER SELLER BD*`;
 
         try {
-            await ctx.telegram.sendMessage(ADMIN_ID, feedbackMsg, { parse_mode: 'MarkdownV2' });
-            await ctx.telegram.sendMessage(GROUP_ID, feedbackMsg, { parse_mode: 'MarkdownV2' });
+            await ctx.telegram.sendMessage(ADMIN_ID, feedbackMsg, { parse_mode: 'Markdown' });
+            const reactionButtons = await getGroupReactionButtons();
+            const groupFeedbackSent = await ctx.telegram.sendMessage(parseInt(GROUP_ID), feedbackMsg, {
+                parse_mode: 'Markdown',
+                ...reactionButtons
+            });
+            if (groupFeedbackSent && groupFeedbackSent.message_id) {
+                await addAutoReactions(ctx.telegram, GROUP_ID, groupFeedbackSent.message_id);
+            }
         } catch (e) {
             console.error("Failed to forward review feedback to admin/group:", e.message);
         }
@@ -3537,7 +3717,10 @@ bot.action(/^deliver_stock_(.+)$/, async (ctx) => {
                              `📡 STATUS → 🟢 **DELIVERED WITH 10-DAY PREMIUM**\n\n` +
                              `> 🚀 **ADSPOWER SELLER BD**`;
 
-        await ctx.telegram.sendMessage(parseInt(GROUP_ID), realSaleMsg, { parse_mode: 'Markdown' });
+        const sentReal = await ctx.telegram.sendMessage(parseInt(GROUP_ID), realSaleMsg, { parse_mode: 'Markdown' });
+        if (sentReal && sentReal.message_id) {
+            await addAutoReactions(ctx.telegram, GROUP_ID, sentReal.message_id);
+        }
     } catch (err) {}
 
     // Send credentials to User
@@ -4432,11 +4615,14 @@ async function runExpiryCheck(req, res) {
 module.exports = async (req, res) => {
     if (req.method === 'POST') {
         try {
-            await bot.handleUpdate(req.body);
-            res.status(200).json({ status: 'ok' });
+            const update = typeof req.body === 'string' ? JSON.parse(req.body) : req.body;
+            if (update) {
+                await bot.handleUpdate(update);
+            }
+            return res.status(200).json({ status: 'ok' });
         } catch (e) {
-            console.error(e);
-            res.status(500).json({ error: 'Error processing update' });
+            console.error("Webhook handleUpdate error:", e.message);
+            return res.status(200).json({ status: 'error', message: e.message });
         }
     } else {
         try {
@@ -4449,22 +4635,26 @@ module.exports = async (req, res) => {
                 return res.status(200).json({ status: "success", message: "Fake sale triggered." });
             }
 
-            // Safely set bot commands and webhook (silently ignore rate limits on rapid GET pings)
-            try {
-                await bot.telegram.setMyCommands([
-                    { command: 'start', description: 'Start the bot / প্রধান মেনু 🚀' }
-                ]);
-                if (req.headers.host) {
-                    const webhookUrl = `https://${req.headers.host}`;
+            let webhookStatus = "not_set";
+            if (req.headers.host) {
+                try {
+                    await bot.telegram.setMyCommands([
+                        { command: 'start', description: 'Start the bot / প্রধান মেনু 🚀' }
+                    ]);
+                    const webhookUrl = `https://${req.headers.host}/api/bot.js`;
                     await bot.telegram.setWebhook(webhookUrl);
+                    webhookStatus = `Webhook updated to ${webhookUrl}`;
+                } catch (setupErr) {
+                    webhookStatus = `Webhook error: ${setupErr.message}`;
                 }
-            } catch (setupErr) {
-                // Ignore Telegram 420 rate limit on repeated GET calls
             }
-            return res.status(200).json({ message: 'AdsPower Bot is running successfully!' });
+            return res.status(200).json({
+                message: 'AdsPower Bot is running successfully!',
+                webhook: webhookStatus
+            });
         } catch (err) {
-            console.error("Failed to set commands:", err);
-            res.status(200).json({ message: 'AdsPower Bot is running successfully!' });
+            console.error("GET handler error:", err.message);
+            return res.status(200).json({ message: 'AdsPower Bot is running successfully!' });
         }
     }
 };
