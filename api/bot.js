@@ -4449,15 +4449,19 @@ module.exports = async (req, res) => {
                 return res.status(200).json({ status: "success", message: "Fake sale triggered." });
             }
 
-            // Set bot slash commands list in Telegram and auto-register Webhook URL
-            await bot.telegram.setMyCommands([
-                { command: 'start', description: 'Start the bot / প্রধান মেনু 🚀' }
-            ]);
-            if (req.headers.host) {
-                const webhookUrl = `https://${req.headers.host}`;
-                await bot.telegram.setWebhook(webhookUrl);
+            // Safely set bot commands and webhook (silently ignore rate limits on rapid GET pings)
+            try {
+                await bot.telegram.setMyCommands([
+                    { command: 'start', description: 'Start the bot / প্রধান মেনু 🚀' }
+                ]);
+                if (req.headers.host) {
+                    const webhookUrl = `https://${req.headers.host}`;
+                    await bot.telegram.setWebhook(webhookUrl);
+                }
+            } catch (setupErr) {
+                // Ignore Telegram 420 rate limit on repeated GET calls
             }
-            res.status(200).json({ message: 'AdsPower Bot is running successfully, commands & webhook set!' });
+            return res.status(200).json({ message: 'AdsPower Bot is running successfully!' });
         } catch (err) {
             console.error("Failed to set commands:", err);
             res.status(200).json({ message: 'AdsPower Bot is running successfully!' });
